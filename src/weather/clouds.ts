@@ -83,7 +83,7 @@ function nearlyEqual(a: THREE.Matrix4, b: THREE.Matrix4): boolean {
   return true;
 }
 
-function terrainTexture(heightmap: Heightmap): THREE.DataTexture {
+export function terrainTexture(heightmap: Heightmap): THREE.DataTexture {
   const { width, height } = heightmap.meta;
   const half = new Uint16Array(width * height);
   for (let i = 0; i < half.length; i++) half[i] = THREE.DataUtils.toHalfFloat(heightmap.heights[i] / 1000);
@@ -108,6 +108,17 @@ export interface CloudLayer {
   invalidate(): void;
   /** Frames accumulated since the view last changed. */
   readonly frames: number;
+  /** What an overlay drawn after render() needs: the scene depth, the clouds on screen and their settings. */
+  readonly overlay: CloudOverlay;
+}
+
+export interface CloudOverlay {
+  depth: THREE.Texture;
+  /** Premultiplied cloud colour and alpha, before the opacity setting. */
+  cloud: THREE.Texture;
+  opacity: number;
+  cloudScale: number;
+  exaggeration: number;
 }
 
 /**
@@ -260,6 +271,15 @@ export function createCloudLayer(
     enabled: true,
     get frames() {
       return frames;
+    },
+    get overlay() {
+      return {
+        depth: sceneTarget.depthTexture!,
+        cloud: history.textures[0],
+        opacity: compositeMaterial.uniforms.uOpacity.value,
+        cloudScale,
+        exaggeration,
+      };
     },
     setExaggeration(value) {
       exaggeration = value;

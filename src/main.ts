@@ -8,6 +8,7 @@ import { createOcean, mountSeaControls } from './sea/ocean';
 import { createDetailTerrain, type DetailTerrain } from './detail/detailTerrain';
 import { createSea, createTerrain, setDetailRects } from './terrain';
 import { createCloudLayer, loadUkvClouds, mountCloudControls, type CloudLayer } from './weather/clouds';
+import { createRainLayer, mountRainControls, type RainLayer } from './weather/rain/rain';
 import './style.css';
 
 const container = document.getElementById('app')!;
@@ -64,6 +65,7 @@ let detail: DetailTerrain | undefined;
 let setExaggeration: ((value: number) => void) | undefined;
 /** The exaggeration in use, which can differ from the slider (see easeRelief). */
 let exaggeration = 1;
+let animatedRain: RainLayer | undefined;
 
 async function init() {
   const [heightmap, rainField, cloudData] = await Promise.all([
@@ -90,6 +92,8 @@ async function init() {
   rainInput.checked = rain.visible = false;
   clouds = createCloudLayer(renderer, scene, camera, cloudData, heightmap, sunDirection);
   mountCloudControls(document.getElementById('hud')!, clouds, cloudData.meta);
+  animatedRain = createRainLayer(renderer, camera, clouds, cloudData, heightmap);
+  mountRainControls(document.getElementById('hud')!, animatedRain);
   const validTime = new Date(rainField.meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
   rainInfo.textContent = `UKV precipitation rate, valid ${validTime} UTC. ${rainField.meta.attribution}.`;
 
@@ -128,7 +132,7 @@ async function init() {
     })
     .catch((error) => console.error('Detailed terrain failed to load', error));
   // Handles for driving the view from the console or screenshot scripts.
-  if (import.meta.env.DEV) Object.assign(window, { camera, rig, projection, scene, clouds });
+  if (import.meta.env.DEV) Object.assign(window, { camera, rig, projection, scene, clouds, rain: animatedRain, renderer });
 }
 
 window.addEventListener('resize', () => {
@@ -169,6 +173,7 @@ renderer.setAnimationLoop((time) => {
   }
   if (clouds) clouds.render();
   else renderer.render(scene, camera);
+  animatedRain?.render();
 });
 
 init().catch((error) => {
