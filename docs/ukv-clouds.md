@@ -37,6 +37,12 @@ UKV has no cloud-type field, so the type is implied by these fields rather than 
 
 - The scene renders to an MSAA target with a depth texture. A half-resolution full-screen pass then raymarches the
   clouds, stopping at the terrain depth, and writes cloud colour and a cloud shadow for the ground (two render targets).
+- Rays are unprojected on the near plane. On the far plane, with the ground camera's near plane under a metre and the
+  far plane at 20,000 km, the inverse projection is ill-conditioned in float32. Below about 10 m above ground the
+  rays came out as garbage, and the clouds and their shadow vanished.
+- **Cloud shadow on the ground.** Light is `max(mix(1, shadow, 0.75), 0.55)`, tinted slightly cool under cloud. The
+  0.55 floor is the light from the cloud base. Real overcast is 10–25% of clear-sky light, but eyes and cameras
+  adapt to it, and the old 25% floor went through the ACES toe (exposure 0.6) to near black.
 - Cloud fraction from the volume sets the coverage. Perlin–Worley shape noise and Worley detail noise from the cloud
   lab carve it into billows, so a 2 km grid cell does not look like a block. Detail fades out with distance.
 - Clouds sit above the terrain (heights are AGL). The vertical scale follows the map's terrain exaggeration, and the
@@ -93,6 +99,19 @@ be seen yet.
 
 ![Rain close-up](images/ukv-clouds/rain-closeup.png)
 
+**Under the deck, 1 km up over the West Midlands.** Before (left) the shadowed ground went almost black. After
+(right) it reads as a dull overcast day.
+
+| Before | After |
+|---|---|
+| ![1 km, before](images/ukv-clouds/under-deck-1km-before.png) | ![1 km, after](images/ukv-clouds/under-deck-1km.png) |
+
+**At 50 m, the ground view's floor, under the same deck.** Looking at the horizon, and up at the cloud base.
+
+![Ground view under the deck](images/ukv-clouds/under-deck-ground.png)
+
+![Looking up at the cloud base](images/ukv-clouds/ground-looking-up.png)
+
 ## Performance
 
 Measured on the RX 7700S through ANGLE / Direct3D 11, 1600 x 900, clouds at half resolution with 160 steps, vsync on
@@ -105,6 +124,9 @@ Measured on the RX 7700S through ANGLE / Direct3D 11, 1600 x 900, clouds at half
 | Clouds on, camera orbiting | 32.2 ms |
 | Clouds on, camera still (converged) | 6.2 ms |
 | 5 s descent from the default view to 0.5 km above ground | 27.5 ms average: 32.5 ms high up, 33 ms through the deck, 17 ms below it |
+| Dive to the ground with `rig.toGround` (about 8 s) | 21.3 ms average |
+| Ground view at 50 m, still (converged) | 6.1 ms |
+| Ground view at 50 m, turning, horizon / looking up | 13.7 / 19.5 ms |
 
 Reprojection costs nothing measurable: the same pan took 33.6 ms before it and 33.2 ms after. It does not make
 moving frames cheaper; it makes them cleaner. Each pixel still marches one sample per frame, but it now averages
@@ -135,7 +157,8 @@ How it looks in motion:
 - **Moving cost.** About 32 ms a frame while moving on this GPU. Reprojection made motion clean but not cheaper.
   Next ideas: march fewer pixels per frame (checkerboard or 1 in 4, filled from the reprojected history), an
   empty-space skip from the volume, and fewer steps while moving.
-- **Under the deck.** Below the overcast the ground is almost black, darker than an overcast day should be.
+- **Seen from below.** The overcast underside is a pale, structureless veil. With cloud opacity at 0.75, blue sky
+  shows through a deck that should be opaque. Opacity probably wants to rise to 1 as the camera nears the ground.
 - **One static hour.** The next step towards the product goal is loading the coming hour from the latest run.
 - **Above 6 km.** The 3D field stops at 6 km, so thunderstorm tops and anvils are not modelled yet (see the research
   note for the heuristics).

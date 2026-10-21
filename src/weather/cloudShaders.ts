@@ -182,7 +182,9 @@ float ign(vec2 px) {
 void main() {
   // Sub-pixel jitter (R2 sequence) so accumulated frames also antialias.
   vec2 sub = fract(vec2(0.7548776662, 0.5698402910) * uFrame) - 0.5;
-  vec4 view = uInvProj * vec4((vUv + sub * uTexel) * 2.0 - 1.0, 1.0, 1.0);
+  // Unproject on the near plane: with the ground camera's near plane at 0.4 m and the far plane at 20000 km, the far
+  // plane point is ill-conditioned in float32 and the rays come out as garbage.
+  vec4 view = uInvProj * vec4((vUv + sub * uTexel) * 2.0 - 1.0, -1.0, 1.0);
   vec3 rd = normalize((uCamWorld * vec4(view.xyz / view.w, 0.0)).xyz);
   vec3 ro = uCamPos;
 
@@ -347,7 +349,7 @@ void main() {
   bool cloudValid = true;
   bool shadowValid = true;
   if (uMoving) {
-    vec4 view = uInvProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+    vec4 view = uInvProj * vec4(vUv * 2.0 - 1.0, -1.0, 1.0);
     vec3 rd = normalize((uCamWorld * vec4(view.xyz / view.w, 0.0)).xyz);
     vec3 p = uCamPos + rd * shadow.g;
     cloudUv = reproject(p, cloudValid);
@@ -415,6 +417,7 @@ uniform sampler2D uShadow;
 uniform sampler2D uDepth;
 uniform sampler2D uTerrain;
 uniform float uShadowStrength;
+uniform float uShadowFloor;
 uniform float uOpacity;
 uniform float uOutline;
 uniform mat4 uInvProj;
@@ -437,8 +440,12 @@ void main() {
   // Premultiplied, so scaling the whole vec4 fades the cloud evenly.
   vec4 cloud = texture2D(uCloud, vUv) * uOpacity;
   float shadow = texture2D(uShadow, vUv).r;
-  // Shadow removes most of the direct sun; skylight still reaches the ground.
-  vec3 scene = texture2D(uScene, vUv).rgb * mix(1.0, shadow, uShadowStrength);
+  // Under thick cloud the sun is gone but the cloud base still lights the ground with grey diffuse light, so the
+  // shadow bottoms out at a skylight floor (well above the physical 10-25%: the eye and camera adapt to
+  // overcast, and ACES tone mapping crushes anything lower to near black) and turns slightly cooler.
+  float light = max(mix(1.0, shadow, uShadowStrength), uShadowFloor);
+  vec3 tint = mix(vec3(1.0), vec3(0.93, 0.97, 1.05), 1.0 - shadow);
+  vec3 scene = texture2D(uScene, vUv).rgb * light * tint;
   vec3 color = scene * (1.0 - cloud.a) + cloud.rgb;
 
   // Coastline and height contours of the ground under the cloud, drawn on top so the map stays readable.
@@ -446,7 +453,7 @@ void main() {
   if (uOutline > 0.0 && cloud.a > 0.02) {
     float w = pow(uFar + 1.0, texture2D(uDepth, vUv).r) - 1.0;
     if (w < 10000.0) {
-      vec4 view = uInvProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+      vec4 view = uInvProj * vec4(vUv * 2.0 - 1.0, -1.0, 1.0);
       vec3 rd = normalize((uCamWorld * vec4(view.xyz / view.w, 0.0)).xyz);
       vec3 p = uCamPos + rd * (w / max(dot(rd, uCamForward), 1e-4));
       vec2 uv = vec2((p.x * 1000.0 - uTerrainBox.x) / (uTerrainBox.y - uTerrainBox.x),

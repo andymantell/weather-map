@@ -214,6 +214,7 @@ export function createCloudLayer(
       uCloud: { value: null },
       uShadow: { value: null },
       uShadowStrength: { value: 0.75 },
+      uShadowFloor: { value: 0.55 },
       uOpacity: { value: 0.75 },
       uOutline: { value: 1 },
       // Shared with the cloud pass, which keeps them up to date.
