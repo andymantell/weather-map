@@ -47,5 +47,9 @@
     "width": 1748,
     "height": 1290,
     "scenes": 14
+  },
+  "boundaries": {
+    "hedgeKm": 547.3,
+    "wallKm": 15.9
   }
 }

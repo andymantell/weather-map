@@ -9,6 +9,7 @@ import {
   parseMasses,
   type ScaledUniforms,
 } from './buildings';
+import { createBoundaries } from './boundaries';
 import { createGround } from './ground';
 import { createTrees, TREE_CHUNK } from './trees';
 
@@ -35,6 +36,7 @@ const SKIRT = 150;
 // View distances (km, from the camera to the nearest point of a tile, including height).
 const FOOTPRINTS_WITHIN = 2.5;
 const FINE_BLOCKS_WITHIN = 12;
+const BOUNDARIES_WITHIN = 4;
 const TILE_HIDDEN_BEYOND = 250;
 /** Life-size trees are drawn in chunks within this distance (km); further chunks use the far trees. */
 const NEAR_TREES_WITHIN = 4;
@@ -53,6 +55,9 @@ interface Tile {
   rect: THREE.Vector4;
   buildings: Building[];
   footprints?: THREE.Mesh;
+  /** Hedges and walls (boundaries.bin), built when the camera first comes near. */
+  boundaryData: ArrayBuffer | null;
+  boundaries?: THREE.Mesh;
   fineBlocks?: THREE.Mesh;
   coarseBlocks?: THREE.Mesh;
   /** Life-size trees, generated per chunk as the camera approaches; key "i,j". */
@@ -125,8 +130,10 @@ function createSkirt(area: Area): THREE.Mesh {
 async function createTile(baseUrl: string, name: string, coarse: GroundSampler, coarseScale: number): Promise<Tile> {
   const area = await loadArea(baseUrl, name);
   const dir = `${baseUrl}data/detail/${name}/`;
-  const [fine, coarseMasses] = await Promise.all(
-    ['masses-10', 'masses-18'].map((f) => fetch(`${dir}${f}.bin`).then((r) => r.arrayBuffer())),
+  const [fine, coarseMasses, boundaryData] = await Promise.all(
+    ['masses-10', 'masses-18', 'boundaries'].map((f) =>
+      fetch(`${dir}${f}.bin`).then((r) => (r.ok ? r.arrayBuffer() : null)),
+    ),
   );
   blendEdges(area, coarse, coarseScale);
 
@@ -149,8 +156,9 @@ async function createTile(baseUrl: string, name: string, coarse: GroundSampler, 
     uniforms,
     rect: new THREE.Vector4(meta.xMin / 1000, -meta.yMax / 1000, meta.xMax / 1000, -meta.yMin / 1000),
     buildings: parseBuildings(area),
-    fineBlocks: createMasses(parseMasses(fine), area, uniforms),
-    coarseBlocks: createMasses(parseMasses(coarseMasses), area, uniforms),
+    boundaryData,
+    fineBlocks: createMasses(parseMasses(fine!), area, uniforms),
+    coarseBlocks: createMasses(parseMasses(coarseMasses!), area, uniforms),
     nearTrees: new Map(),
     farTrees: createTrees(area, { scale: FAR_TREE_SCALE }, uniforms),
   };
@@ -228,6 +236,11 @@ export async function createDetailTerrain(
         t.group.add(t.footprints);
       }
       if (t.footprints) t.footprints.visible = view < FOOTPRINTS_WITHIN;
+      if (view < BOUNDARIES_WITHIN && !t.boundaries && t.boundaryData) {
+        t.boundaries = createBoundaries(t.area, t.boundaryData, t.uniforms);
+        t.group.add(t.boundaries);
+      }
+      if (t.boundaries) t.boundaries.visible = view < BOUNDARIES_WITHIN;
       t.fineBlocks!.visible = view >= FOOTPRINTS_WITHIN && view < FINE_BLOCKS_WITHIN;
       t.coarseBlocks!.visible = view >= FINE_BLOCKS_WITHIN;
       const e = THREE.MathUtils.clamp(Math.log(Math.max(view, 0.3) / 0.3) / Math.log(30 / 0.3), 0, 1);

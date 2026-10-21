@@ -201,7 +201,7 @@ vec3 surfaceColour(vec2 p, out float rough) {
   // Grade the image: haze makes it flat and grey, so stretch the contrast against a ~150 m
   // blur (to bring out field edges and crops) and warm it towards the palette elsewhere.
   vec3 blur = texture2D(imageryTex, uv, 4.0).rgb;
-  sat = max(blur + (sat - blur) * 1.5, 0.0) * vec3(1.32, 1.34, 0.82);
+  sat = max(blur + (sat - blur) * 1.5, 0.0) * vec3(1.2, 1.34, 0.85);
   // Texture that the 10 m pixels cannot carry, stronger in woods and on moor.
   float amp = (k == 3 || k == 4 || k == 5 || k == 6) ? 1.6 : 1.0;
   float near = 1.0 - smoothstep(3.0, 14.0, length(fwidth(p)));
