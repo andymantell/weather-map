@@ -1,6 +1,6 @@
 import * as THREE from 'three';
-import { MapControls } from 'three/addons/controls/MapControls.js';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { CameraRig, mountCameraControls } from './camera/cameraRig';
 import { loadHeightmap } from './heightmap';
 import { Projection } from './projection';
 import { createRainPlane, loadRainField } from './rain';
@@ -26,14 +26,8 @@ container.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog('#b9cfe0', 600, 2600);
 
-// World units are kilometres.
+// World units are kilometres. The camera rig moves the near plane with the camera's height above ground.
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 20000);
-
-const controls = new MapControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.maxPolarAngle = Math.PI * 0.47;
-controls.minDistance = 5;
-controls.maxDistance = 3000;
 
 // Low afternoon sun from the south-west (azimuth is measured from +Z, which is south).
 const sunElevation = THREE.MathUtils.degToRad(28);
@@ -63,6 +57,7 @@ scene.add(sun);
 scene.add(new THREE.HemisphereLight('#cfe3f5', '#4a4636', 0.9));
 
 let clouds: CloudLayer | undefined;
+let rig: CameraRig | undefined;
 
 async function init() {
   const [heightmap, rainField, cloudData] = await Promise.all([
@@ -74,6 +69,8 @@ async function init() {
 
   const terrain = createTerrain(heightmap);
   scene.add(terrain);
+  rig = new CameraRig(camera, renderer.domElement, terrain, scene);
+  mountCameraControls(document.getElementById('hud')!, rig, document.getElementById('camera-hint')!);
   const flatSea = createSea(heightmap);
   scene.add(flatSea);
   const ocean = await createOcean(renderer, heightmap, sky, import.meta.env.BASE_URL);
@@ -102,13 +99,13 @@ async function init() {
 
   // Start looking north over England and Wales.
   const target = projection.toWorld(-2.5, 53.5);
-  controls.target.set(target.x, 0, target.z);
+  rig.map.target.set(target.x, 0, target.z);
   camera.position.set(target.x - 60, 420, target.z + 620);
-  controls.update();
+  rig.map.update();
 
   loading.remove();
   // Handles for driving the view from the console or screenshot scripts.
-  if (import.meta.env.DEV) Object.assign(window, { camera, controls, scene, clouds });
+  if (import.meta.env.DEV) Object.assign(window, { camera, rig, projection, scene, clouds });
 }
 
 window.addEventListener('resize', () => {
@@ -118,8 +115,12 @@ window.addEventListener('resize', () => {
   clouds?.resize();
 });
 
-renderer.setAnimationLoop(() => {
-  controls.update();
+const timer = new THREE.Timer();
+timer.connect(document);
+renderer.setAnimationLoop((time) => {
+  timer.update(time);
+  // Clamp the step so a stalled tab does not teleport the camera.
+  rig?.update(Math.min(timer.getDelta(), 0.1));
   if (clouds) clouds.render();
   else renderer.render(scene, camera);
 });

@@ -66,3 +66,19 @@ body {
 #hud #rain-info {
   max-width: 340px;
 }
+
+#hud .camera-mode {
+  margin: 0 0 8px;
+  padding: 4px 10px;
+  border: 1px solid rgba(232, 238, 243, 0.4);
+  border-radius: 6px;
+  background: rgba(232, 238, 243, 0.12);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+#hud .camera-mode:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
