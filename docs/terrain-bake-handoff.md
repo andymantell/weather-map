@@ -144,20 +144,25 @@ it forever. For the UK it needs to:
 
 ## Open data-level questions to settle on the test tiles first
 
+Andy's answers (2026-10-21) are noted under each. Better data sources for 1 and 2 are
+researched in [terrain-data-sources.md](terrain-data-sources.md).
+
 These change baked data, so settle them before the full run. Shader-side tweaks (colour
 grading, markings, hedge looks, water, view distances) can carry on afterwards without a rebake.
 
 1. **Building heights:** only about 19% of OSM buildings in Plymouth have a level count. The
    rest are estimated from class or area (`building_height()` in `build_area.py`). Check that the
-   estimates look right in other towns.
+   estimates look right in other towns. *Andy: fine for now.* Environment Agency lidar would give
+   measured heights for England (see terrain-data-sources.md).
 2. **Land-cover classes:** ESA WorldCover "shrub" is treated as heath only above 250 m, and
    forest above 250 m as conifer. Check this on Dartmoor, in the Lake District and in the
-   Highlands.
-3. **Roads:** which attributes to keep (lanes? speed? names?), and the default widths per class
-   (`WIDTHS` in `build_roads.py`).
+   Highlands. *Andy: fine for now.* The National Forest Inventory (open) gives real wood types,
+   including felled areas.
+3. **Roads:** *Andy: no more attributes needed; widths roughly right per type.* Done:
+   `WIDTHS` in `build_roads.py` now gives UK widths per OSM class, per mapped line.
 4. **Hedges and walls:** field outlines with no barrier mapped become hedges at Plymouth and
-   walls at Kielder (`FIELD_EDGE`). The UK needs a rule, e.g. walls in the uplands and the north,
-   hedges in the lowlands. Agree this with Andy.
+   walls at Kielder. *Agreed with Andy and done:* walls above 250 m or north of 54.5°,
+   hedges elsewhere (`WALLS_ABOVE_M`, `WALLS_NORTH_OF` in `build_boundaries.py`).
 5. **Satellite imagery:** the composite is a summer median of 2023 to 2025 scenes. Scotland and
    the north have fewer clear scenes, so check coverage. `build_imagery.py` falls back to the
    all-scene median for pixels never seen clear, which may leave cloud traces. The colour grade is
