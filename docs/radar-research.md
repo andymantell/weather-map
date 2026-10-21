@@ -3,6 +3,9 @@
 Research only, 21 October 2026. Andy asked what the radar source is, whether it's just rain, and asked for a
 report before anything is built. Nothing in the app uses it yet.
 
+**Status: parked (21 October 2026).** Andy said not to build the radar blend for now, but to keep the idea for
+later. He may first try to get a fresher full UKV feed, which would make the radar less necessary.
+
 ## The short version
 
 - It's the **Met Office's own UK rain radar composite**, published free on AWS in the bucket
