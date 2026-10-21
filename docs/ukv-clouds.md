@@ -47,7 +47,7 @@ UKV has no cloud-type field, so the type is implied by these fields rather than 
   lab carve it into billows, so a 2 km grid cell does not look like a block. Detail fades out with distance.
 - Clouds sit above the terrain (heights are AGL). The vertical scale follows the map's terrain exaggeration, and the
   "Cloud height" slider scales the cloud layer on its own (default 3). "Cloud opacity" fades the clouds over the map
-  (default 0.75).
+  (default 0.75) and ramps to fully opaque as the camera descends into the cloud layer.
 - Lighting: sun march for self-shadowing, two-lobe Henyey–Greenstein phase, multiple-scattering octaves, powder
   term, and energy-conserving integration (Hillaire).
 - Rain below the cloud base uses Shipley's extinction, σ = 0.16 R^0.74 per km, with vertical streak noise. Raining
@@ -157,8 +157,8 @@ How it looks in motion:
 - **Moving cost.** About 32 ms a frame while moving on this GPU. Reprojection made motion clean but not cheaper.
   Next ideas: march fewer pixels per frame (checkerboard or 1 in 4, filled from the reprojected history), an
   empty-space skip from the volume, and fewer steps while moving.
-- **Seen from below.** The overcast underside is a pale, structureless veil. With cloud opacity at 0.75, blue sky
-  shows through a deck that should be opaque. Opacity probably wants to rise to 1 as the camera nears the ground.
+- **Seen from below.** The overcast underside is a pale, structureless veil. Cloud opacity now ramps to 1 as the
+  camera descends from twice the cloud-layer top to the top, so the deck is no longer see-through from below.
 - **One static hour.** The next step towards the product goal is loading the coming hour from the latest run.
 - **Above 6 km.** The 3D field stops at 6 km, so thunderstorm tops and anvils are not modelled yet (see the research
   note for the heuristics).
