@@ -203,11 +203,15 @@ void main() {
   float weightSum = 0.0;
 
   if (range.y > range.x) {
-    float dt = max((range.y - range.x) / float(uSteps), 0.08);
-    float t = range.x + dt * jitter;
+    // Steps grow with distance from the camera (dt = k (t + 0.5 km)), so from the ground or inside the cloud the
+    // nearby cloud is sampled every few tens of metres while the far slab still fits in uSteps. From the map view
+    // range.x is large and this is close to uniform.
+    float k = log((range.y + 0.5) / (range.x + 0.5)) / float(uSteps);
+    float t = range.x;
     for (int i = 0; i < 1024; i++) {
       if (i >= uSteps || t > range.y || T < 0.01) break;
-      vec3 p = ro + rd * t;
+      float dt = min(max(k * (t + 0.5), 0.02), range.y - t + 1e-3);
+      vec3 p = ro + rd * (t + dt * jitter);
       Sample s = sampleAt(p, false, smoothstep(60.0, 450.0, t));
       float sigmaRain = s.rain > 0.0 ? 0.16 * pow(s.rain, 0.74) : 0.0;
       float sigmaT = s.cloud + sigmaRain;
@@ -236,7 +240,7 @@ void main() {
         float stepT = exp(-sigmaT * dt);
         radiance += T * (S - S * stepT) / sigmaT;
         float absorbed = T * (1.0 - stepT);
-        depthSum += absorbed * t;
+        depthSum += absorbed * (t + dt * jitter);
         weightSum += absorbed;
         T *= stepT;
       }
