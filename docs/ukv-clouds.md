@@ -48,7 +48,11 @@ UKV has no cloud-type field, so the type is implied by these fields rather than 
   cloud is darkened.
 - Each frame adds a jittered sample to a running average. Once 32 frames have been averaged and the camera has not
   moved, the clouds are no longer marched, so a still view costs nothing extra.
-- The HUD has a "Clouds and rain" toggle, the "Cloud height" and "Cloud opacity" sliders and the valid time.
+- The HUD has a "Clouds and rain" toggle, the "Cloud height" and "Cloud opacity" sliders, an "Outline land under
+  cloud" switch (coastline plus 200 m contours drawn over the cloud, at full resolution from the scene depth) and the
+  valid time.
+- Rain falls only from where the shape noise leaves cloud at the base, so shafts hang under clouds rather than filling
+  a whole 2 km grid cell as a smooth column.
 
 ## Screenshots
 

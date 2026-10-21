@@ -119,17 +119,24 @@ Sample sampleAt(vec3 p, bool cheap, float lod) {
 
   float base = f2.g > 0.999 ? 1.0 : f2.g * 8.0;
   float rain = 64.0 * f2.r * f2.r;
+  // Convective columns (high CAPE) billow; layered cloud is flatter and smoother.
+  float convective = smoothstep(0.15, 0.6, f2.a);
   if (rain > 0.1 && h < base) {
+    // Rain falls only from where the noise left cloud at the base, so shafts hang under clouds instead of
+    // filling the whole 2 km grid cell as a smooth column. A 0.6 coverage floor keeps light drizzle patches.
+    float hb = min(base + 0.15, uVolumeTop - 0.01);
+    float cov = max(texture(uVolume, vec3(uv, hb / uVolumeTop)).r, 0.6);
+    vec4 nb = texture(uShape, vec3(p.x, hb * mix(2.2, 1.0, convective), p.z) / 9.0);
+    float shapeB = remap(nb.r, nb.g * 0.625 + nb.b * 0.25 + nb.a * 0.125 - 1.0, 1.0, 0.0, 1.0);
+    float underCloud = smoothstep(0.0, 0.25, remap(shapeB, 1.0 - cov, 1.0, 0.0, 1.0));
     vec3 sp = vec3(p.x / 1.2, h / 7.0, p.z / 1.2);
-    s.rain = rain * (0.4 + texture(uDetail, sp).r) * smoothstep(0.0, 0.3, base - h + 0.15);
+    s.rain = rain * underCloud * (0.4 + texture(uDetail, sp).r) * smoothstep(0.0, 0.3, base - h + 0.15);
   }
   // Fade out towards the edge of the baked grid instead of stopping at a straight line.
   vec2 edge = min(uv, 1.0 - uv);
   coverage *= smoothstep(0.0, 0.03, min(edge.x, edge.y));
   if (coverage < 0.02) return s;
 
-  // Convective columns (high CAPE) billow; layered cloud is flatter and smoother.
-  float convective = smoothstep(0.15, 0.6, f2.a);
   vec3 q = vec3(p.x, h * mix(2.2, 1.0, convective), p.z);
   vec4 n = texture(uShape, q / 9.0);
   float fbm = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
@@ -290,16 +297,57 @@ export const compositeFragmentShader = /* glsl */ `
 uniform sampler2D uScene;
 uniform sampler2D uCloud;
 uniform sampler2D uShadow;
+uniform sampler2D uDepth;
+uniform sampler2D uTerrain;
 uniform float uShadowStrength;
 uniform float uOpacity;
+uniform float uOutline;
+uniform mat4 uInvProj;
+uniform mat4 uCamWorld;
+uniform vec3 uCamPos;
+uniform vec3 uCamForward;
+uniform float uFar;
+uniform vec4 uTerrainBox;
+uniform vec2 uTerrainSize;
 varying vec2 vUv;
+
+// 1 on a line where value crosses a multiple of step, antialiased to about widthPx pixels.
+float isoline(float value, float step, float widthPx) {
+  float f = value / step;
+  float d = abs(fract(f + 0.5) - 0.5) / max(fwidth(f), 1e-6);
+  return 1.0 - smoothstep(widthPx * 0.5 - 0.5, widthPx * 0.5 + 0.5, d);
+}
+
 void main() {
   // Premultiplied, so scaling the whole vec4 fades the cloud evenly.
   vec4 cloud = texture2D(uCloud, vUv) * uOpacity;
   float shadow = texture2D(uShadow, vUv).r;
   // Shadow removes most of the direct sun; skylight still reaches the ground.
   vec3 scene = texture2D(uScene, vUv).rgb * mix(1.0, shadow, uShadowStrength);
-  gl_FragColor = vec4(scene * (1.0 - cloud.a) + cloud.rgb, 1.0);
+  vec3 color = scene * (1.0 - cloud.a) + cloud.rgb;
+
+  // Coastline and height contours of the ground under the cloud, drawn on top so the map stays readable.
+  // Full resolution, from the scene depth, so the lines stay sharp while the clouds are still converging.
+  if (uOutline > 0.0 && cloud.a > 0.02) {
+    float w = pow(uFar + 1.0, texture2D(uDepth, vUv).r) - 1.0;
+    if (w < 10000.0) {
+      vec4 view = uInvProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+      vec3 rd = normalize((uCamWorld * vec4(view.xyz / view.w, 0.0)).xyz);
+      vec3 p = uCamPos + rd * (w / max(dot(rd, uCamForward), 1e-4));
+      vec2 uv = vec2((p.x * 1000.0 - uTerrainBox.x) / (uTerrainBox.y - uTerrainBox.x),
+                     (uTerrainBox.w + p.z * 1000.0) / (uTerrainBox.w - uTerrainBox.z));
+      uv = (uv * (uTerrainSize - 1.0) + 0.5) / uTerrainSize;
+      float h = texture2D(uTerrain, uv).r;  // km; land is at least 1 m, sea at most -1 m
+      float coast = 1.0 - smoothstep(0.5, 1.5, abs(h) / max(fwidth(h), 1e-6));
+      // Contours fade out where they would bunch up closer than a few pixels and turn to speckle.
+      float spacing = fwidth(h / 0.2);
+      float contour = h > 0.0 ? isoline(h, 0.2, 1.0) * 0.35 * (1.0 - smoothstep(0.12, 0.3, spacing)) : 0.0;
+      float a = max(coast, contour) * cloud.a * uOutline;
+      color = mix(color, vec3(0.08, 0.12, 0.18), a);
+    }
+  }
+
+  gl_FragColor = vec4(color, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }

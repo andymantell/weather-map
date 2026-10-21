@@ -99,6 +99,8 @@ export interface CloudLayer {
   setCloudScale(value: number): void;
   /** Fades the clouds and rain over the scene, 0 to 1. */
   setOpacity(value: number): void;
+  /** Draws the coastline and height contours over the clouds. */
+  setOutline(on: boolean): void;
   resize(): void;
   /** Frames accumulated since the view last changed. */
   readonly frames: number;
@@ -195,6 +197,17 @@ export function createCloudLayer(
       uShadow: { value: null },
       uShadowStrength: { value: 0.75 },
       uOpacity: { value: 0.75 },
+      uOutline: { value: 1 },
+      // Shared with the cloud pass, which keeps them up to date.
+      uDepth: cloudMaterial.uniforms.uDepth,
+      uTerrain: cloudMaterial.uniforms.uTerrain,
+      uInvProj: cloudMaterial.uniforms.uInvProj,
+      uCamWorld: cloudMaterial.uniforms.uCamWorld,
+      uCamPos: cloudMaterial.uniforms.uCamPos,
+      uCamForward: cloudMaterial.uniforms.uCamForward,
+      uFar: cloudMaterial.uniforms.uFar,
+      uTerrainBox: cloudMaterial.uniforms.uTerrainBox,
+      uTerrainSize: cloudMaterial.uniforms.uTerrainSize,
     },
     depthTest: false,
     depthWrite: false,
@@ -235,6 +248,9 @@ export function createCloudLayer(
     },
     setOpacity(value) {
       compositeMaterial.uniforms.uOpacity.value = value;
+    },
+    setOutline(on) {
+      compositeMaterial.uniforms.uOutline.value = on ? 1 : 0;
     },
     resize() {
       renderer.getDrawingBufferSize(size);
@@ -309,15 +325,16 @@ export function createCloudLayer(
   return layer;
 }
 
-/** Adds the cloud switch, cloud height and opacity sliders and source line to the HUD. */
+/** Adds the cloud switch, cloud height and opacity sliders, outline switch and source line to the HUD. */
 export function mountCloudControls(hud: HTMLElement, layer: CloudLayer, meta: UkvCloudMeta): void {
   const box = document.createElement('div');
   box.innerHTML = `
     <label><input type="checkbox" checked /> Clouds and rain</label>
     <label>Cloud height <input type="range" min="1" max="6" step="0.5" value="3" /> <output>3×</output></label>
     <label>Cloud opacity <input type="range" min="0.25" max="1" step="0.05" value="0.75" /> <output>0.75</output></label>
+    <label><input type="checkbox" checked /> Outline land under cloud</label>
     <p class="hint"></p>`;
-  const [toggle, scale, opacity] = Array.from(box.querySelectorAll('input'));
+  const [toggle, scale, opacity, outline] = Array.from(box.querySelectorAll('input'));
   const [output, opacityOutput] = Array.from(box.querySelectorAll('output'));
   toggle.addEventListener('change', () => (layer.enabled = toggle.checked));
   scale.addEventListener('input', () => {
@@ -328,6 +345,7 @@ export function mountCloudControls(hud: HTMLElement, layer: CloudLayer, meta: Uk
     layer.setOpacity(Number(opacity.value));
     opacityOutput.textContent = opacity.value;
   });
+  outline.addEventListener('change', () => layer.setOutline(outline.checked));
   const valid = new Date(meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
   box.querySelector('p')!.textContent = `UKV cloud and rain, valid ${valid} UTC (fixed hour for now).`;
   hud.appendChild(box);
