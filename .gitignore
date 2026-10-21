@@ -3,3 +3,4 @@ dist/
 .cache/
 *.log
 __pycache__/
+docs/images/terrain-detail/

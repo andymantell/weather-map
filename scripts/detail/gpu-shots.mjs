@@ -3,7 +3,7 @@
 //
 //   npm i --no-save playwright && node scripts/detail/gpu-shots.mjs [http://localhost:5173/]
 //
-// Writes docs/images/terrain-detail/<view>.jpg and prints frame times as JSON.
+// Writes docs/images/terrain-detail/<view>.jpg (not committed) and prints frame times as JSON.
 import fs from 'node:fs';
 import { chromium } from 'playwright';
 

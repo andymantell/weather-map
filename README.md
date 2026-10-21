@@ -36,6 +36,12 @@ pip install -r scripts/requirements.txt
 npm run heightmap
 ```
 
+## Detailed terrain
+
+Plymouth and Kielder have detailed tiles in the main map: real building footprints, Sentinel-2 field colours,
+OpenStreetMap hedges, walls and roads, and trees, down to ground level. See
+[`docs/terrain-detail.md`](docs/terrain-detail.md) for sources, screenshots and how to rebuild a tile.
+
 ## Terrain, towns and forests prototype
 
 `poc/terrain/` (open `/poc/terrain/` on the dev server) is a separate page prototyping detailed terrain, buildings

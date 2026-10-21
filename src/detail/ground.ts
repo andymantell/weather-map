@@ -193,9 +193,17 @@ vec3 surfaceColour(vec2 p, out float rough) {
   // Warp the lookup so class edges are organic rather than texel steps.
   vec2 warp = vec2(vnoise(p / 7.0), vnoise(p / 7.0 + 13.7)) - 0.5;
   int k = coverClass(p + warp * coverTexel * 1.6);
-  // Under ribbons the raster's roads would poke out in steps past the ribbon edges: draw the
-  // verge there instead (the satellite colour, or fields where there is none).
-  if (roadRibbons > 0.5 && (k == 12 || k == 13 || k == 16)) k = 1;
+  // Under ribbons the raster's roads would poke out in steps past the ribbon edges: draw
+  // whatever lies beside the road there instead (housing in town, the verge in the country).
+  if (roadRibbons > 0.5 && (k == 12 || k == 13 || k == 16)) {
+    int side = 1;
+    for (int i = 0; i < 8; i++) {
+      float a = float(i) * 0.785398;
+      int s = coverClass(p + vec2(cos(a), sin(a)) * 8.0);
+      if (s != 12 && s != 13 && s != 16 && s != 15) { side = s; break; }
+    }
+    k = side;
+  }
   vec3 c = proceduralColour(p, k, rough);
   bool natural = (k >= 1 && k <= 8) || k == 14;
   if (useImagery < 0.5 || !natural) return c;
