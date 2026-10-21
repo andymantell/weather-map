@@ -50,3 +50,19 @@ body {
   font-size: 18px;
   pointer-events: none;
 }
+
+#hud .legend {
+  display: flex;
+  margin-top: 6px;
+  font-size: 11px;
+}
+
+#hud .legend span {
+  padding: 2px 5px;
+  color: #fff;
+  text-shadow: 0 0 2px #000;
+}
+
+#hud #rain-info {
+  max-width: 340px;
+}

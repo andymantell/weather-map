@@ -3,6 +3,7 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { loadHeightmap } from './heightmap';
 import { Projection } from './projection';
+import { createRainPlane, loadRainField } from './rain';
 import { createSea, createTerrain } from './terrain';
 import './style.css';
 
@@ -10,6 +11,8 @@ const container = document.getElementById('app')!;
 const loading = document.getElementById('loading')!;
 const exaggerationInput = document.getElementById('exaggeration') as HTMLInputElement;
 const exaggerationValue = document.getElementById('exaggeration-value')!;
+const rainInput = document.getElementById('rain') as HTMLInputElement;
+const rainInfo = document.getElementById('rain-info')!;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, logarithmicDepthBuffer: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -58,15 +61,26 @@ scene.add(sun);
 scene.add(new THREE.HemisphereLight('#cfe3f5', '#4a4636', 0.9));
 
 async function init() {
-  const heightmap = await loadHeightmap(import.meta.env.BASE_URL);
+  const [heightmap, rainField] = await Promise.all([
+    loadHeightmap(import.meta.env.BASE_URL),
+    loadRainField(import.meta.env.BASE_URL),
+  ]);
   const projection = new Projection(heightmap.meta.proj);
 
   const terrain = createTerrain(heightmap);
   scene.add(terrain);
   scene.add(createSea(heightmap));
 
+  const rain = createRainPlane(rainField, heightmap.meta);
+  scene.add(rain);
+  rainInput.addEventListener('change', () => (rain.visible = rainInput.checked));
+  const validTime = new Date(rainField.meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
+  rainInfo.textContent = `UKV precipitation rate, valid ${validTime} UTC. ${rainField.meta.attribution}.`;
+
   const setExaggeration = (value: number) => {
     terrain.scale.y = value;
+    // Float the rain just above the highest (exaggerated) peak.
+    rain.position.y = (heightmap.meta.maxHeight / 1000) * value + 1;
     exaggerationValue.textContent = `${value}×`;
   };
   exaggerationInput.addEventListener('input', () => setExaggeration(Number(exaggerationInput.value)));

@@ -1,0 +1,55 @@
+{
+  "variable": "lwe_precipitation_rate",
+  "standard_name": "lwe_precipitation_rate",
+  "units": "m s-1",
+  "source_file": "20261021T1200Z-PT0003H00M-precipitation_rate.nc",
+  "title": "UKV Model Forecast on UK 2 km Standard Grid",
+  "forecast_reference_time": "2026-10-21T09:00:00Z",
+  "valid_time": "2026-10-21T12:00:00Z",
+  "forecast_period_seconds": 10800,
+  "grid": {
+    "crs": "Lambert Azimuthal Equal Area",
+    "proj4": "+proj=laea +lat_0=54.9 +lon_0=-2.5 +x_0=0 +y_0=0 +ellps=GRS80 +units=m +no_defs +type=crs",
+    "width": 1042,
+    "height": 970,
+    "x_west": -1158000.0,
+    "y_north": 902000.0,
+    "dx": 2000.0,
+    "dy": -2000.0,
+    "units": "m",
+    "note": "cell centres in projected metres; row 0 at y_north, column 0 at x_west",
+    "corners_lon_lat": {
+      "north_west": [
+        -24.50992,
+        61.31886
+      ],
+      "north_east": [
+        15.27977,
+        61.92069
+      ],
+      "south_west": [
+        -17.11713,
+        44.51715
+      ],
+      "south_east": [
+        9.21256,
+        44.89987
+      ]
+    }
+  },
+  "encoding": {
+    "type": "uint16",
+    "formula": "value = offset + scale * code",
+    "png_packing": "code = R * 256 + G",
+    "bin_byte_order": "little-endian",
+    "nodata_code": 0,
+    "offset": -1.0718153718298806e-10,
+    "scale": 1.0718153718298806e-10,
+    "min": 0.0,
+    "max": 7.024034857749939e-06
+  },
+  "files": [
+    "ukv-precipitation-rate.png"
+  ],
+  "attribution": "Contains Met Office data, Crown copyright, licensed under CC BY-SA 4.0"
+}
