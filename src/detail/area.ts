@@ -1,4 +1,4 @@
-/** Loads one proof-of-concept area built by scripts/poc_terrain/build_area.py. */
+/** Loads one detailed terrain area built by scripts/detail/build_area.py. */
 
 export interface AreaMeta {
   proj: string;
@@ -46,7 +46,7 @@ async function pixels(url: string): Promise<Uint8ClampedArray> {
 }
 
 export async function loadArea(baseUrl: string, name: string): Promise<Area> {
-  const dir = `${baseUrl}poc-terrain/${name}/`;
+  const dir = `${baseUrl}data/detail/${name}/`;
   const [meta, heightPx, coverPx, buildings, trees] = await Promise.all([
     fetch(`${dir}meta.json`).then((r) => r.json() as Promise<AreaMeta>),
     pixels(`${dir}height.png`),

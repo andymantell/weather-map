@@ -44,6 +44,12 @@ export const fragmentPars = /* glsl */ `
   uniform vec4 uDepthGrid;  // first sample x, first sample y, spacing (metres), unused
                             // R = real height, G = terrain mesh height (see ocean.ts)
   uniform vec2 uDepthSize;  // samples
+  // Detailed terrain tiles (src/detail/): drawn height (m) on their own fine grids, so the surf
+  // follows the coastline they draw instead of the coarse one.
+  uniform sampler2D uDetailDepth0;
+  uniform sampler2D uDetailDepth1;
+  uniform vec4 uDetailGrid[2]; // first sample x, first sample y, spacing (metres), 1 if in use
+  uniform vec2 uDetailSize[2]; // samples
   uniform vec3 uWaveScaleBytes; // metres / seconds / m s-1 per byte for Hs, Tp, wind
   uniform vec2 uOrigin;     // metres, snapped to TILE * uWaveScale
   uniform float uTime;
@@ -198,6 +204,23 @@ export const fragmentMain = /* glsl */ `
       texture2D(uDepth, depthUv + vec2(0.0, texel.y)).g - texture2D(uDepth, depthUv - vec2(0.0, texel.y)).g
     ) / (2.0 * uDepthGrid.z);
     float coastDistance = -ground.g / max(length(meshGrad), 1e-4);
+    for (int i = 0; i < 2; i++) {
+      vec4 grid = uDetailGrid[i];
+      vec2 size = uDetailSize[i];
+      vec2 cell = vec2(mapPos.x - grid.x, grid.y - mapPos.y) / grid.z;
+      if (grid.w < 0.5 || any(lessThan(cell, vec2(1.0))) || any(greaterThan(cell, size - 2.0))) continue;
+      vec2 uv = (cell + 0.5) / size;
+      vec2 t = 1.0 / size;
+      float h = i == 0 ? texture2D(uDetailDepth0, uv).r : texture2D(uDetailDepth1, uv).r;
+      vec2 g = i == 0
+        ? vec2(texture2D(uDetailDepth0, uv + vec2(t.x, 0.0)).r - texture2D(uDetailDepth0, uv - vec2(t.x, 0.0)).r,
+               texture2D(uDetailDepth0, uv + vec2(0.0, t.y)).r - texture2D(uDetailDepth0, uv - vec2(0.0, t.y)).r)
+        : vec2(texture2D(uDetailDepth1, uv + vec2(t.x, 0.0)).r - texture2D(uDetailDepth1, uv - vec2(t.x, 0.0)).r,
+               texture2D(uDetailDepth1, uv + vec2(0.0, t.y)).r - texture2D(uDetailDepth1, uv - vec2(0.0, t.y)).r);
+      coastDistance = -h / max(length(g) / (2.0 * grid.z), 1e-3);
+      // The fine DEM has no real bathymetry, so shoal towards the drawn coast at about 3%.
+      depth = min(depth, max(coastDistance, 0.0) * 0.03 + 0.5);
+    }
 
     // Work in "model" metres. Realistic mode is a Froude-scaled copy of the real
     // sea, so slopes are unchanged and periods grow with sqrt(scale). Stylised

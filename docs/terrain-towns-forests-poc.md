@@ -53,7 +53,7 @@ native resolution of the UK source inside those tiles, so treat finer detail as 
 
 ## What the prototype builds
 
-`scripts/poc_terrain/build_area.py <area>` writes `public/poc-terrain/<area>/` for a small box:
+`scripts/detail/build_area.py <area>` writes `public/data/detail/<area>/` for a small box:
 
 - `height.png`: Terrarium-encoded heights on the app's UKV LAEA projection. Near the coast the heights are replaced
   with a signed distance to the OSM coastline, so the waterline is smooth between grid points.
@@ -63,12 +63,12 @@ native resolution of the UK source inside those tiles, so treat finer detail as 
   swapped for their oriented rectangle and given a gable roof.
 - `trees.bin`: the individually mapped trees.
 
-`scripts/poc_terrain/build_masses.py <area>` then writes `masses-10.bin` and `masses-18.bin`: the footprints merged
+`scripts/detail/build_masses.py <area>` then writes `masses-10.bin` and `masses-18.bin`: the footprints merged
 into street blocks (grow every footprint by 10 or 18 m, union, shrink back, cut the street network out again,
 simplify). Each mass gets the area-weighted mean height of the buildings inside it. For Plymouth that turns 97,585
 footprints into 6,366 fine masses (0.96 MB) or 3,822 coarse ones (0.49 MB), in about 45 seconds per level.
 
-The page (`src/poc-terrain/`) draws:
+The page (`src/poc-terrain/`, sharing `src/detail/` with the main map) draws:
 
 - **Ground**: the fine height grid shaded from `cover.png`, with procedural detail per class: a Voronoi field
   patchwork with hedgerows and furrows for farmland, mottled canopy for woods, purple-brown heather, gardens speckled

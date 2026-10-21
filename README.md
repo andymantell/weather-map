@@ -40,4 +40,4 @@ npm run heightmap
 
 `poc/terrain/` (open `/poc/terrain/` on the dev server) is a separate page prototyping detailed terrain, buildings
 and trees for two test areas, Plymouth and Kielder Forest, built from Overture Maps by
-`scripts/poc_terrain/build_area.py`. See [`docs/terrain-towns-forests-poc.md`](docs/terrain-towns-forests-poc.md).
+`scripts/detail/build_area.py`. See [`docs/terrain-towns-forests-poc.md`](docs/terrain-towns-forests-poc.md).

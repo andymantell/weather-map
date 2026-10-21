@@ -204,6 +204,79 @@ export function scaledMaterial(material: THREE.Material, uniforms: ScaledUniform
   return material;
 }
 
+/**
+ * Facade and roof detail, in sRGB-free multipliers on the vertex colour: rows of windows on walls
+ * (by storey, from the wall's own coordinates, so no UVs are needed), a darker plinth, and slate
+ * courses on pitched roofs. It all fades out with distance before it would shimmer.
+ */
+const FACADE = /* glsl */ `
+varying vec3 vFacadePos;
+varying vec3 vFacadeNormal;
+
+float facadeHash(vec2 p) {
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+void facade(inout vec3 colour, inout float rough) {
+  vec3 n = normalize(vFacadeNormal);
+  vec3 p = vFacadePos;
+  if (abs(n.y) < 0.5) {
+    // Wall: u runs along the wall, v up from the ground.
+    float u = dot(p.xz, normalize(vec2(-n.z, n.x)));
+    float v = p.y;
+    vec2 cell = vec2(u / 3.1, (v - 0.9) / 3.0);
+    vec2 id = floor(cell);
+    vec2 f = fract(cell);
+    float footprint = max(fwidth(u), fwidth(v));
+    float fade = 1.0 - smoothstep(0.6, 1.6, footprint);
+    float h = facadeHash(id + floor(p.xz / 50.0));
+    float win = step(0.22, f.x) * step(f.x, 0.78) * step(0.28, f.y) * step(f.y, 0.82) * step(0.0, v - 0.9);
+    // Glass: dark sky-tinted, a few lit or curtained panes.
+    vec3 glass = mix(vec3(0.10, 0.13, 0.17), vec3(0.32, 0.36, 0.42), h * h);
+    colour = mix(colour, glass, win * fade);
+    rough = mix(rough, 0.15, win * fade);
+    // Plinth and a faint string course at each floor.
+    colour *= mix(1.0, 0.72, (1.0 - step(0.8, v)) * fade);
+    colour *= 1.0 - 0.06 * fade * (1.0 - smoothstep(0.0, 0.06, abs(f.y - 0.04)));
+    // Mass shading so blank walls are not flat: lighter higher up.
+    colour *= 0.88 + 0.12 * clamp(v / 12.0, 0.0, 1.0);
+  } else if (n.y < 0.97) {
+    // Pitched roof: slate courses across the slope.
+    float footprint = fwidth(p.y);
+    float fade = 1.0 - smoothstep(0.05, 0.25, footprint);
+    float course = fract(p.y / 0.12);
+    colour *= 1.0 - 0.18 * fade * (1.0 - smoothstep(0.0, 0.25, course));
+    colour *= 0.92 + 0.16 * facadeHash(floor(p.xz / 0.4) + floor(p.y / 0.12));
+  } else {
+    // Flat roof: weathered felt and gravel.
+    colour *= 0.85 + 0.2 * facadeHash(floor(p.xz / 2.0));
+  }
+}
+`;
+
+/** Vertical scaling plus facade detail; shared by footprints and street blocks. */
+function buildingMaterial(uniforms: ScaledUniforms): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 });
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nattribute float aBase;\nuniform float terrainScale;\nuniform float buildingScale;\nvarying vec3 vFacadePos;\nvarying vec3 vFacadeNormal;',
+      )
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvFacadePos = position;\nvFacadeNormal = normal;\ntransformed.y = aBase * terrainScale + transformed.y * buildingScale;',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\n${FACADE}`)
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nfacade(diffuseColor.rgb, roughnessFactor);');
+  };
+  return material;
+}
+
 export function createFootprints(buildings: Building[], uniforms: ScaledUniforms): THREE.Mesh {
   const b = new Builder();
   for (const bld of buildings) addFootprint(b, bld);
@@ -211,7 +284,7 @@ export function createFootprints(buildings: Building[], uniforms: ScaledUniforms
   geometry.computeBoundingSphere();
   const mesh = new THREE.Mesh(
     geometry,
-    scaledMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), uniforms),
+    buildingMaterial(uniforms),
   );
   mesh.customDepthMaterial = scaledMaterial(
     new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }),
@@ -288,7 +361,7 @@ export function createBlocks(
   }
   const mesh = new THREE.Mesh(
     b.geometry(),
-    scaledMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), uniforms),
+    buildingMaterial(uniforms),
   );
   mesh.customDepthMaterial = scaledMaterial(
     new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }),
@@ -375,7 +448,7 @@ export function createMasses(masses: Mass[], area: Area, uniforms: ScaledUniform
   }
   const mesh = new THREE.Mesh(
     b.geometry(),
-    scaledMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), uniforms),
+    buildingMaterial(uniforms),
   );
   mesh.customDepthMaterial = scaledMaterial(
     new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }),

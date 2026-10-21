@@ -5,7 +5,8 @@ import { loadHeightmap } from './heightmap';
 import { Projection } from './projection';
 import { createRainPlane, loadRainField } from './rain';
 import { createOcean, mountSeaControls } from './sea/ocean';
-import { createSea, createTerrain } from './terrain';
+import { createDetailTerrain, type DetailTerrain } from './detail/detailTerrain';
+import { createSea, createTerrain, setDetailRects } from './terrain';
 import { createCloudLayer, loadUkvClouds, mountCloudControls, type CloudLayer } from './weather/clouds';
 import './style.css';
 
@@ -13,6 +14,7 @@ const container = document.getElementById('app')!;
 const loading = document.getElementById('loading')!;
 const exaggerationInput = document.getElementById('exaggeration') as HTMLInputElement;
 const exaggerationValue = document.getElementById('exaggeration-value')!;
+const reliefEasingInput = document.getElementById('relief-easing') as HTMLInputElement;
 const rainInput = document.getElementById('rain') as HTMLInputElement;
 const rainInfo = document.getElementById('rain-info')!;
 
@@ -58,6 +60,10 @@ scene.add(new THREE.HemisphereLight('#cfe3f5', '#4a4636', 0.9));
 
 let clouds: CloudLayer | undefined;
 let rig: CameraRig | undefined;
+let detail: DetailTerrain | undefined;
+let setExaggeration: ((value: number) => void) | undefined;
+/** The exaggeration in use, which can differ from the slider (see easeRelief). */
+let exaggeration = 1;
 
 async function init() {
   const [heightmap, rainField, cloudData] = await Promise.all([
@@ -87,14 +93,18 @@ async function init() {
   const validTime = new Date(rainField.meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
   rainInfo.textContent = `UKV precipitation rate, valid ${validTime} UTC. ${rainField.meta.attribution}.`;
 
-  const setExaggeration = (value: number) => {
+  setExaggeration = (value: number) => {
+    exaggeration = value;
     terrain.scale.y = value;
     // Float the rain just above the highest (exaggerated) peak.
     rain.position.y = (heightmap.meta.maxHeight / 1000) * value + 1;
     clouds?.setExaggeration(value);
-    exaggerationValue.textContent = `${value}×`;
+    detail?.setExaggeration(value);
   };
-  exaggerationInput.addEventListener('input', () => setExaggeration(Number(exaggerationInput.value)));
+  exaggerationInput.addEventListener('input', () => {
+    exaggerationValue.textContent = `${exaggerationInput.value}×`;
+    setExaggeration!(Number(exaggerationInput.value));
+  });
   setExaggeration(Number(exaggerationInput.value));
 
   // Start looking north over England and Wales.
@@ -104,6 +114,19 @@ async function init() {
   rig.map.update();
 
   loading.remove();
+
+  // Detailed tiles (towns, woods, fine terrain) load after the map is up.
+  createDetailTerrain(import.meta.env.BASE_URL, terrain, sun, renderer)
+    .then((d) => {
+      detail = d;
+      d.setExaggeration(terrain.scale.y);
+      scene.add(d.group);
+      setDetailRects(d.rects);
+      rig!.sampler.detail = d.terrainAt;
+      d.grounds.slice(0, 2).forEach((g, i) => ocean.setDetailGround(i, g.heights, g.width, g.height, g.x0, g.yMax, g.spacing));
+      if (import.meta.env.DEV) Object.assign(window, { detail: d });
+    })
+    .catch((error) => console.error('Detailed terrain failed to load', error));
   // Handles for driving the view from the console or screenshot scripts.
   if (import.meta.env.DEV) Object.assign(window, { camera, rig, projection, scene, clouds });
 }
@@ -115,12 +138,35 @@ window.addEventListener('resize', () => {
   clouds?.resize();
 });
 
+/**
+ * The slider's exaggeration suits the map, but from the ground it turns hills into cliffs. Below
+ * 20 km the relief eases (on a log scale of height) towards 1.5x at 200 m and under.
+ */
+const NEAR_GROUND_RELIEF = 1.5;
+function easeRelief(aboveGround: number) {
+  if (!setExaggeration || !rig) return;
+  const slider = Number(exaggerationInput.value);
+  let target = slider;
+  if (reliefEasingInput.checked && slider > NEAR_GROUND_RELIEF) {
+    const t = THREE.MathUtils.clamp(Math.log(aboveGround / 0.2) / Math.log(20 / 0.2), 0, 1);
+    target = NEAR_GROUND_RELIEF + (slider - NEAR_GROUND_RELIEF) * THREE.MathUtils.smoothstep(t, 0, 1);
+  }
+  if (Math.abs(target - exaggeration) < 0.002 * exaggeration) return;
+  setExaggeration(target);
+}
+
 const timer = new THREE.Timer();
 timer.connect(document);
 renderer.setAnimationLoop((time) => {
   timer.update(time);
   // Clamp the step so a stalled tab does not teleport the camera.
   rig?.update(Math.min(timer.getDelta(), 0.1));
+  if (rig) {
+    const p = camera.position;
+    const aboveGround = Math.max(p.y - rig.sampler.heightAt(p.x, p.z), 0.001);
+    easeRelief(aboveGround);
+    detail?.update(camera, aboveGround);
+  }
   if (clouds) clouds.render();
   else renderer.render(scene, camera);
 });

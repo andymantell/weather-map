@@ -86,6 +86,11 @@ export interface Ocean {
   uniforms: Record<string, THREE.IUniform>;
   /** Stylised (exaggerated, readable from the overview) or realistic (true scale) waves. */
   setStyle(stylised: boolean, size?: number, steepness?: number): void;
+  /**
+   * Gives the surf a detailed tile's drawn ground (src/detail/), slot 0 or 1: heights in metres,
+   * row-major from the north-west sample at (x0, yMax) in LAEA metres.
+   */
+  setDetailGround(slot: number, heights: Float32Array, width: number, height: number, x0: number, yMax: number, spacing: number): void;
 }
 
 /**
@@ -113,6 +118,10 @@ export async function createOcean(
     },
     uDepthGrid: { value: new THREE.Vector4(meta.xMin, meta.yMax, meta.spacing * TERRAIN_STRIDE, 0) },
     uDepthSize: { value: new THREE.Vector2(uniformsDepth.image.width, uniformsDepth.image.height) },
+    uDetailDepth0: { value: new THREE.DataTexture(new Uint16Array(1), 1, 1, THREE.RedFormat, THREE.HalfFloatType) },
+    uDetailDepth1: { value: new THREE.DataTexture(new Uint16Array(1), 1, 1, THREE.RedFormat, THREE.HalfFloatType) },
+    uDetailGrid: { value: [new THREE.Vector4(), new THREE.Vector4()] },
+    uDetailSize: { value: [new THREE.Vector2(1, 1), new THREE.Vector2(1, 1)] },
     uWaveScaleBytes: { value: new THREE.Vector3(scale.hs, scale.tp, scale.wind) },
     uOrigin: { value: new THREE.Vector2() },
     uTime: { value: 0 },
@@ -194,6 +203,17 @@ export async function createOcean(
       uniforms.uFoam.value = stylised ? 0.7 : 1;
       uniforms.uSpread.value.set(...spread);
       uniforms.uSpreadNorm.value.set(spreadNorm(spread[0]), spreadNorm(spread[1]));
+    },
+    setDetailGround(slot, heights, width, height, x0, yMax, spacing) {
+      const data = new Uint16Array(heights.length);
+      for (let i = 0; i < heights.length; i++) data[i] = THREE.DataUtils.toHalfFloat(heights[i]);
+      const texture = new THREE.DataTexture(data, width, height, THREE.RedFormat, THREE.HalfFloatType);
+      texture.magFilter = THREE.LinearFilter;
+      texture.minFilter = THREE.LinearFilter;
+      texture.needsUpdate = true;
+      uniforms[`uDetailDepth${slot}`].value = texture;
+      (uniforms.uDetailGrid.value as THREE.Vector4[])[slot].set(x0, yMax, spacing, 1);
+      (uniforms.uDetailSize.value as THREE.Vector2[])[slot].set(width, height);
     },
   };
   ocean.setStyle(true);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FIELDS, NOISE } from './detail/ground';
 import type { Heightmap } from './heightmap';
 
 /**
@@ -107,8 +108,78 @@ export function createTerrain(heightmap: Heightmap): THREE.Mesh {
     roughness: 0.95,
     metalness: 0,
   });
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, terrainUniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vTerrainWorld;\nvarying float vTrueHeight;')
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\nvTerrainWorld = (modelMatrix * vec4(position, 1.0)).xyz;\nvTrueHeight = position.y * 1000.0;',
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\n${NOISE}\n${FIELDS}\n${GROUND_DETAIL}`)
+      .replace('#include <color_fragment>', '#include <color_fragment>\ngroundDetail(diffuseColor.rgb);');
+  };
   return new THREE.Mesh(geometry, material);
 }
+
+/** Up to this many detailed tiles (src/detail/) can cut holes in the coarse terrain. */
+export const MAX_DETAIL_RECTS = 4;
+
+/** Shared by every terrain material; set via setDetailRects. */
+const terrainUniforms = {
+  uDetailRects: { value: Array.from({ length: MAX_DETAIL_RECTS }, () => new THREE.Vector4(1e9, 1e9, -1e9, -1e9)) },
+};
+
+/**
+ * Hides the coarse terrain inside the given world rectangles (km: xMin, zMin, xMax, zMax),
+ * where detailed tiles draw their own ground.
+ */
+export function setDetailRects(rects: THREE.Vector4[]) {
+  terrainUniforms.uDetailRects.value.forEach((r, i) =>
+    rects[i] ? r.copy(rects[i]) : r.set(1e9, 1e9, -1e9, -1e9),
+  );
+}
+
+/**
+ * Close-up ground detail for the whole UK, faded in as the camera gets near enough
+ * to resolve it: a field patchwork with hedgerows in the lowlands and mottled moorland
+ * on high ground. From further away the hypsometric vertex colours show unchanged.
+ */
+const GROUND_DETAIL = /* glsl */ `
+uniform vec4 uDetailRects[${MAX_DETAIL_RECTS}];
+varying vec3 vTerrainWorld;
+varying float vTrueHeight;
+
+void groundDetail(inout vec3 colour) {
+  for (int i = 0; i < ${MAX_DETAIL_RECTS}; i++) {
+    vec4 r = uDetailRects[i];
+    if (vTerrainWorld.x > r.x && vTerrainWorld.x < r.z && vTerrainWorld.z > r.y && vTerrainWorld.z < r.w) discard;
+  }
+  if (vTrueHeight <= ${LAND_LIFT}.0) return;
+  vec2 p = vTerrainWorld.xz * 1000.0;
+  // Metres per pixel: the detail fades out before it would shimmer.
+  float footprint = length(fwidth(p));
+  // Hedges and furrows fade first (in fieldColour); whole fields go when they are a few pixels wide.
+  float fade = 1.0 - smoothstep(25.0, 80.0, footprint);
+  // Beyond that, a broad mottle of farmland and moor keeps the land from looking flat.
+  float mottle = fbm(vTerrainWorld.xz / 1.8) * 0.6 + fbm(vTerrainWorld.xz / 7.0) * 0.4;
+  colour *= 1.0 + (0.36 * mottle - 0.18) * (1.0 - smoothstep(300.0, 1200.0, footprint));
+  if (fade <= 0.0) return;
+  float rough;
+  float fieldSize = 160.0;
+  vec2 f = fields(p / fieldSize + vec2(fbm(p / 300.0), fbm(p / 300.0 + 5.0)) * 0.6);
+  vec3 lowland = fieldColour(f.x, p, f.y, fieldSize, rough);
+  vec3 a = vec3(0.36, 0.30, 0.20), b = vec3(0.32, 0.25, 0.27), g = vec3(0.40, 0.40, 0.20);
+  float n = fbm(p / 9.0);
+  vec3 moor = mix(mix(a, b, smoothstep(0.35, 0.65, fbm(p / 40.0))), g, smoothstep(0.55, 0.8, n)) * (0.85 + 0.3 * vnoise(p / 1.7));
+  float upland = smoothstep(230.0, 340.0, vTrueHeight + 120.0 * (fbm(p / 900.0) - 0.5));
+  vec3 detail = pow(mix(lowland, moor, upland), vec3(2.2));
+  // Keep the rock and snow the vertex colours already paint on steep or high ground.
+  float green = smoothstep(0.02, 0.08, colour.g - colour.b);
+  colour = mix(colour, detail, fade * green);
+}
+`;
 
 /** A flat sea surface at sea level covering the terrain extent. */
 export function createSea(heightmap: Heightmap): THREE.Mesh {

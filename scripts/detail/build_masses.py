@@ -6,13 +6,13 @@ network is cut back out so roads stay open. Each mass gets the area-weighted mea
 height of the buildings inside it. A larger r gives coarser masses for farther views.
 
 Reads the Overture data cached by build_area.py and writes
-public/poc-terrain/<area>/masses-<r>.bin:
+public/data/detail/<area>/masses-<r>.bin:
 
     per mass: uint16 ring count, uint8 0, uint8 0, float32 height
     per ring: uint16 vertex count, uint16 0, then float32 x, y pairs (metres from the
               area's xMin, yMax), outer ring first and counter-clockwise, holes after.
 
-Usage: python3 scripts/poc_terrain/build_masses.py plymouth
+Usage: python3 scripts/detail/build_masses.py plymouth
 """
 
 import json
@@ -38,7 +38,7 @@ ROAD_CUT = {
 
 def main(area_name):
     bbox = AREAS[area_name]["bbox"]
-    out = ROOT / "public" / "poc-terrain" / area_name
+    out = ROOT / "public" / "data" / "detail" / area_name
     meta = json.loads((out / "meta.json").read_text())
     x0, y1 = meta["xMin"], meta["yMax"]
     clip = shapely.box(meta["xMin"], meta["yMin"], meta["xMax"], meta["yMax"])

@@ -1,6 +1,6 @@
 """Build the data for one terrain proof-of-concept area (see docs/terrain-poc.md).
 
-For a small lon/lat box this writes, into public/poc-terrain/<area>/:
+For a small lon/lat box this writes, into public/data/detail/<area>/:
 
 - height.png    Terrarium-encoded heights on a fine LAEA grid (AWS Terrain Tiles).
 - cover.png     One byte per texel land-cover class (see CLASSES), rasterised from
@@ -13,7 +13,7 @@ For a small lon/lat box this writes, into public/poc-terrain/<area>/:
 Overture Maps is read straight from its public S3 bucket, so no API key is needed.
 Coordinates are the app's UKV LAEA projection in metres.
 
-Usage: python3 scripts/poc_terrain/build_area.py plymouth
+Usage: python3 scripts/detail/build_area.py plymouth
 """
 
 import json
@@ -45,7 +45,7 @@ AREAS = {
     "kielder": dict(bbox=(-2.75, 55.1, -2.35, 55.33), spacing=25, texel=8),
 }
 
-# Land-cover classes written to cover.png; src/poc-terrain/cover.ts mirrors these.
+# Land-cover classes written to cover.png; src/detail/ground.ts mirrors these.
 CLASSES = dict(
     sea=0, fields=1, park=2, broadleaf=3, conifer=4, heath=5, rock=6, sand=7,
     wetland=8, water=9, urban=10, industrial=11, minor_road=12, major_road=13,
@@ -56,7 +56,7 @@ UPLAND_SHRUB = 200  # temporary class while rasterising
 UPLAND_M = 250
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-CACHE = ROOT / ".cache" / "poc-terrain"
+CACHE = ROOT / ".cache" / "detail"
 
 to_lonlat = Transformer.from_crs(PROJ, "EPSG:4326", always_xy=True)
 from_lonlat = Transformer.from_crs("EPSG:4326", PROJ, always_xy=True)
@@ -179,7 +179,7 @@ def building_height(row, area):
 def main(area_name):
     cfg = AREAS[area_name]
     bbox, spacing, texel = cfg["bbox"], cfg["spacing"], cfg["texel"]
-    out = ROOT / "public" / "poc-terrain" / area_name
+    out = ROOT / "public" / "data" / "detail" / area_name
     out.mkdir(parents=True, exist_ok=True)
 
     # Grid in LAEA covering the lon/lat box, snapped to the spacing.

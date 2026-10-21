@@ -7,11 +7,11 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { N8AOPass } from 'n8ao';
 import { loadHeightmap } from '../heightmap';
 import { Projection } from '../projection';
-import { type Area, heightAt, loadArea } from './area';
-import { type Building, createBlocks, createFootprints, createMasses, parseBuildings, parseMasses } from './buildings';
-import { createGround } from './ground';
-import { createSurroundings } from './surroundings';
-import { createTrees } from './trees';
+import { type Area, heightAt, loadArea } from '../detail/area';
+import { type Building, createBlocks, createFootprints, createMasses, parseBuildings, parseMasses } from '../detail/buildings';
+import { createGround } from '../detail/ground';
+import { createSurroundings } from '../detail/surroundings';
+import { createTrees } from '../detail/trees';
 import '../style.css';
 import './poc.css';
 
@@ -186,7 +186,7 @@ async function rebuildBuildings() {
   if (state.buildings === 'footprints') layer = createFootprints(buildings, uniforms);
   else if (state.buildings === 'blocks') layer = createBlocks(buildings, area, state.cell, uniforms);
   else if (state.buildings.startsWith('masses-')) {
-    const url = `${import.meta.env.BASE_URL}poc-terrain/${area.name}/${state.buildings}.bin`;
+    const url = `${import.meta.env.BASE_URL}data/detail/${area.name}/${state.buildings}.bin`;
     const buffer = await fetch(url).then((r) => r.arrayBuffer());
     // A later change of mode wins if this one was still loading.
     if (request !== buildingRequest) return;

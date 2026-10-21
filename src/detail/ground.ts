@@ -4,12 +4,13 @@ import type { Area } from './area';
 // Colours in the shader are written in sRGB and linearised before lighting.
 
 /**
- * Terrain surface for a PoC area: a fine height grid shaded from the land-cover
+ * Terrain surface for a detailed area: a fine height grid shaded from the land-cover
  * raster, with procedural detail per class (field patchwork with hedgerows, mottled
  * woodland and moorland, gardens speckled through housing, road tarmac).
  */
 
-const NOISE = /* glsl */ `
+/** Hash, value noise, fbm and Voronoi helpers shared with the UK-wide terrain shader. */
+export const NOISE = /* glsl */ `
 float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
@@ -58,21 +59,9 @@ vec2 fields(vec2 p) {
 }
 `;
 
-const SURFACE = /* glsl */ `
-uniform sampler2D coverTex;
-uniform vec2 areaSize;
-uniform float coverTexel;
-uniform float fieldSize;
-varying vec2 vLocal;
-varying float vHeight;
-
-int coverClass(vec2 p) {
-  // Beyond the detailed tile (the 1 km surroundings) land is all field patchwork.
-  if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, areaSize))) return vHeight > 0.0 ? 1 : 0;
-  return int(texture2D(coverTex, p / areaSize).r * 255.0 + 0.5);
-}
-
-vec3 fieldColour(float id, vec2 p, float edge, out float rough) {
+/** One field of the UK patchwork (sRGB): pasture, arable or ploughed, with hedgerows at its edge. */
+export const FIELDS = /* glsl */ `
+vec3 fieldColour(float id, vec2 p, float edge, float fieldSize, out float rough) {
   // UK patchwork: mostly pasture greens, some arable yellows and ploughed browns.
   vec3 c;
   rough = 0.95;
@@ -81,17 +70,37 @@ vec3 fieldColour(float id, vec2 p, float edge, out float rough) {
   else if (id < 0.88) c = mix(vec3(0.62, 0.54, 0.28), vec3(0.70, 0.62, 0.34), fract(id * 3.7));
   else c = mix(vec3(0.33, 0.25, 0.16), vec3(0.43, 0.33, 0.21), fract(id * 9.1));
   // Tramlines / furrows in arable fields along a per-field direction.
+  float near = 1.0 - smoothstep(3.0, 14.0, length(fwidth(p)));
   if (id >= 0.55) {
     float a = id * 31.0;
     vec2 dir = vec2(cos(a), sin(a));
     float rows = sin(dot(p, dir) * (id > 0.88 ? 2.2 : 0.35));
-    c *= 0.93 + 0.07 * rows;
+    c *= 1.0 - 0.07 * near * (1.0 - rows);
   }
   c *= 0.88 + 0.24 * fbm(p / 18.0);
   // Hedgerows along field edges, broken up so they read as bushes.
   float hedge = 1.0 - smoothstep(1.5, 3.5, edge * fieldSize + 1.5 * vnoise(p / 4.0));
-  c = mix(c, vec3(0.10, 0.17, 0.06) * (0.8 + 0.4 * vnoise(p / 3.0)), hedge);
+  c = mix(c, vec3(0.10, 0.17, 0.06) * (0.8 + 0.4 * vnoise(p / 3.0)), hedge * mix(0.5, 1.0, near));
+  // Tussocks and patchy grass close up.
+  c *= 1.0 + near * 0.18 * (vnoise(p / 0.7) - 0.5);
   return c;
+}
+`;
+
+const SURFACE = /* glsl */ `
+uniform sampler2D coverTex;
+uniform vec2 areaSize;
+uniform float coverTexel;
+uniform float fieldSize;
+varying vec2 vLocal;
+varying float vHeight;
+/** Surface relief (m) for bump shading, set by surfaceColour. */
+float surfBump;
+
+int coverClass(vec2 p) {
+  // Beyond the detailed tile (the 1 km surroundings) land is all field patchwork.
+  if (any(lessThan(p, vec2(0.0))) || any(greaterThan(p, areaSize))) return vHeight > 0.0 ? 1 : 0;
+  return int(texture2D(coverTex, p / areaSize).r * 255.0 + 0.5);
 }
 
 vec3 surfaceColour(vec2 p, out float rough) {
@@ -101,11 +110,17 @@ vec3 surfaceColour(vec2 p, out float rough) {
   float n = fbm(p / 9.0);
   float fine = vnoise(p / 1.7);
   rough = 0.95;
+  float bumpFade = 1.0 - smoothstep(1.0, 6.0, length(fwidth(p)));
+  float relief = fbm(p / 1.3) * 0.25 + vnoise(p / 0.4) * 0.05;
+  surfBump = relief * bumpFade;
   if (k == 1) {
     vec2 f = fields(p / fieldSize + vec2(fbm(p / 300.0), fbm(p / 300.0 + 5.0)) * 0.6);
-    return fieldColour(f.x, p, f.y, rough);
+    return fieldColour(f.x, p, f.y, fieldSize, rough);
   }
-  if (k == 2) return mix(vec3(0.27, 0.45, 0.15), vec3(0.34, 0.52, 0.19), n) * (0.95 + 0.05 * sin(p.x * 0.4));
+  if (k == 2) return mix(vec3(0.27, 0.40, 0.15), vec3(0.34, 0.46, 0.20), n) * (0.95 + 0.05 * sin(p.x * 0.4)) * (0.9 + 0.2 * fine);
+  if (k == 3 || k == 4) surfBump = (fbm(p / 3.0) * 0.8 + vnoise(p / 0.8) * 0.15) * bumpFade;
+  if (k == 6) surfBump = (fbm(p / 2.0) * 1.2) * bumpFade;
+  if (k >= 9 && k != 14) surfBump = 0.0;
   if (k == 3) return mix(vec3(0.08, 0.16, 0.05), vec3(0.17, 0.27, 0.08), n * 0.7 + fine * 0.3);
   if (k == 4) return mix(vec3(0.05, 0.11, 0.06), vec3(0.10, 0.18, 0.09), n * 0.7 + fine * 0.3);
   if (k == 5) {
@@ -123,13 +138,33 @@ vec3 surfaceColour(vec2 p, out float rough) {
     return mix(hard, garden, smoothstep(0.42, 0.6, fbm(p / 6.0)));
   }
   if (k == 11) return vec3(0.42, 0.42, 0.43) * (0.85 + 0.25 * n);
-  if (k == 12) { rough = 0.8; return vec3(0.20, 0.20, 0.21) * (0.9 + 0.2 * fine); }
-  if (k == 13) { rough = 0.75; return vec3(0.15, 0.15, 0.16) * (0.9 + 0.2 * fine); }
+  if (k == 12) { rough = 0.8; return vec3(0.33, 0.33, 0.34) * (0.9 + 0.2 * fine); }
+  if (k == 13) { rough = 0.75; return vec3(0.27, 0.27, 0.28) * (0.9 + 0.2 * fine); }
   if (k == 14) return vec3(0.40, 0.35, 0.27) * (0.85 + 0.3 * n);
   if (k == 15) return vec3(0.30, 0.26, 0.23) * (0.85 + 0.3 * fine);
   if (k == 16) return vec3(0.52, 0.47, 0.37);
   // Sea bed / foreshore under the water plane.
   return mix(vec3(0.45, 0.42, 0.33), vec3(0.20, 0.25, 0.24), smoothstep(-0.5, -3.0, vHeight));
+}
+`;
+
+/**
+ * Bump shading from surfBump (metres) by screen-space derivatives, as in Mikkelsen (2010),
+ * "Bump Mapping Unparametrized Surfaces on the GPU". Tile meshes are in metres scaled to km.
+ */
+const BUMP = /* glsl */ `
+{
+  vec3 pos = -vViewPosition;
+  vec3 dpdx = dFdx(pos);
+  vec3 dpdy = dFdy(pos);
+  float b = surfBump * 0.001;
+  float bx = dFdx(b);
+  float by = dFdy(b);
+  vec3 r1 = cross(dpdy, normal);
+  vec3 r2 = cross(normal, dpdx);
+  float det = dot(dpdx, r1);
+  vec3 grad = sign(det) * (bx * r1 + by * r2);
+  normal = normalize(abs(det) * normal - grad);
 }
 `;
 
@@ -193,12 +228,13 @@ export function createGround(area: Area): Ground {
       .replace('#include <common>', '#include <common>\nvarying vec2 vLocal;\nvarying float vHeight;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLocal = position.xz;\nvHeight = position.y;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${NOISE}\n${SURFACE}`)
+      .replace('#include <common>', `#include <common>\n${NOISE}\n${FIELDS}\n${SURFACE}`)
       .replace(
         '#include <color_fragment>',
         '#include <color_fragment>\nfloat surfRough;\ndiffuseColor.rgb = pow(surfaceColour(vLocal, surfRough), vec3(2.2));',
       )
-      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = surfRough;');
+      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = surfRough;')
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${BUMP}`);
   };
   const mesh = new THREE.Mesh(geometry, material);
   mesh.receiveShadow = true;

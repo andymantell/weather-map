@@ -13,6 +13,11 @@ export class GroundSampler {
   private readonly z0: number;
   private readonly dx: number;
   private readonly dz: number;
+  /**
+   * Detailed terrain tiles (src/detail/) drawn over the coarse mesh: returns their ground height (km,
+   * exaggerated) at a point, or null where there is no tile.
+   */
+  detail: ((x: number, z: number) => number | null) | null = null;
 
   constructor(private readonly terrain: THREE.Mesh) {
     const positions = terrain.geometry.getAttribute('position').array;
@@ -30,6 +35,8 @@ export class GroundSampler {
 
   /** Terrain surface height, without the sea. */
   terrainAt(x: number, z: number): number {
+    const detail = this.detail?.(x, z);
+    if (detail != null) return detail;
     const u = THREE.MathUtils.clamp((x - this.x0) / this.dx, 0, this.cols - 1.0001);
     const v = THREE.MathUtils.clamp((z - this.z0) / this.dz, 0, this.rows - 1.0001);
     const c = Math.floor(u);
