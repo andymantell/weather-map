@@ -4,3 +4,4 @@ pyproj>=3.6
 pyarrow>=17
 shapely>=2.0
 scipy>=1.11
+rasterio

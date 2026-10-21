@@ -41,5 +41,11 @@
     "rail": 15,
     "path": 16
   },
-  "attribution": "Overture Maps Foundation (incl. \u00a9 OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles"
+  "attribution": "Overture Maps Foundation (incl. \u00a9 OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles; Contains modified Copernicus Sentinel data",
+  "imagery": {
+    "pixel": 10,
+    "width": 1748,
+    "height": 1290,
+    "scenes": 14
+  }
 }

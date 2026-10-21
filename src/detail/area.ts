@@ -19,6 +19,8 @@ export interface AreaMeta {
   trees: number;
   hasCoast: boolean;
   classes: Record<string, number>;
+  /** Sentinel-2 colour image (scripts/detail/build_imagery.py), north up from xMin, yMax. */
+  imagery?: { pixel: number; width: number; height: number; scenes: number };
   attribution: string;
 }
 
@@ -31,6 +33,8 @@ export interface Area {
   cover: Uint8Array;
   buildings: ArrayBuffer;
   trees: Float32Array;
+  /** Satellite colour, if the area has it. */
+  imagery: ImageBitmap | null;
   /** Size in metres; local scene X runs east from xMin, Z runs south from yMax. */
   sizeX: number;
   sizeZ: number;
@@ -54,6 +58,11 @@ export async function loadArea(baseUrl: string, name: string): Promise<Area> {
     fetch(`${dir}buildings.bin`).then((r) => r.arrayBuffer()),
     fetch(`${dir}trees.bin`).then((r) => r.arrayBuffer()),
   ]);
+  const imagery = meta.imagery
+    ? await fetch(`${dir}imagery.jpg`)
+        .then((r) => r.blob())
+        .then((b) => createImageBitmap(b, { imageOrientation: 'none' }))
+    : null;
   const heights = new Float32Array(meta.width * meta.height);
   for (let i = 0; i < heights.length; i++) {
     const p = i * 4;
@@ -68,6 +77,7 @@ export async function loadArea(baseUrl: string, name: string): Promise<Area> {
     cover,
     buildings,
     trees: new Float32Array(trees),
+    imagery,
     sizeX: meta.xMax - meta.xMin,
     sizeZ: meta.yMax - meta.yMin,
   };

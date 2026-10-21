@@ -115,6 +115,9 @@ uniform sampler2D coverTex;
 uniform vec2 areaSize;
 uniform float coverTexel;
 uniform float fieldSize;
+uniform sampler2D imageryTex;
+uniform vec2 imagerySize;
+uniform float useImagery;
 varying vec2 vLocal;
 varying float vHeight;
 /** Surface relief (m) for bump shading, set by surfaceColour. */
@@ -128,10 +131,7 @@ int coverClass(vec2 p) {
   return int(texture2D(coverTex, p / areaSize).r * 255.0 + 0.5);
 }
 
-vec3 surfaceColour(vec2 p, out float rough) {
-  // Warp the lookup so class edges are organic rather than texel steps.
-  vec2 warp = vec2(vnoise(p / 7.0), vnoise(p / 7.0 + 13.7)) - 0.5;
-  int k = coverClass(p + warp * coverTexel * 1.6);
+vec3 proceduralColour(vec2 p, int k, out float rough) {
   float n = fbm(p / 9.0);
   float fine = vnoise(p / 1.7);
   rough = 0.95;
@@ -177,6 +177,37 @@ vec3 surfaceColour(vec2 p, out float rough) {
   if (k == 16) return vec3(0.52, 0.47, 0.37);
   // Sea bed / foreshore under the water plane.
   return mix(vec3(0.45, 0.42, 0.33), vec3(0.20, 0.25, 0.24), 1.0 - smoothstep(-3.0, -0.5, vHeight));
+}
+
+/**
+ * Ground colour: the land-cover class picks the treatment. Farmland, parks, woodland floor,
+ * moor, rock, sand and wetland take their colour from the Sentinel-2 image (the real field
+ * pattern and crops) with procedural texture on top close up; built-up land, roads and
+ * water stay procedural. The image fades out over the tile's last 600 m to match the
+ * coarse terrain beyond.
+ */
+vec3 surfaceColour(vec2 p, out float rough) {
+  // Warp the lookup so class edges are organic rather than texel steps.
+  vec2 warp = vec2(vnoise(p / 7.0), vnoise(p / 7.0 + 13.7)) - 0.5;
+  int k = coverClass(p + warp * coverTexel * 1.6);
+  vec3 c = proceduralColour(p, k, rough);
+  bool natural = (k >= 1 && k <= 8) || k == 14;
+  if (useImagery < 0.5 || !natural) return c;
+  vec2 edge = min(p, areaSize - p);
+  float inside = smoothstep(0.0, 600.0, min(edge.x, edge.y));
+  if (inside <= 0.0) return c;
+  vec2 uv = p / imagerySize;
+  vec3 sat = texture2D(imageryTex, uv).rgb;
+  // Grade the image: haze makes it flat and grey, so stretch the contrast against a ~150 m
+  // blur (to bring out field edges and crops) and warm it towards the palette elsewhere.
+  vec3 blur = texture2D(imageryTex, uv, 4.0).rgb;
+  sat = max(blur + (sat - blur) * 1.5, 0.0) * vec3(1.32, 1.34, 0.82);
+  // Texture that the 10 m pixels cannot carry, stronger in woods and on moor.
+  float amp = (k == 3 || k == 4 || k == 5 || k == 6) ? 1.6 : 1.0;
+  float near = 1.0 - smoothstep(3.0, 14.0, length(fwidth(p)));
+  float tex = 1.0 + amp * (0.24 * (fbm(p / 9.0) - 0.5) + 0.16 * (vnoise(p / 1.7) - 0.5))
+            + near * 0.18 * (vnoise(p / 0.7) - 0.5);
+  return mix(c, sat * tex, inside);
 }
 `;
 
@@ -224,6 +255,18 @@ export interface Ground {
   uniforms: { fieldSize: { value: number } };
 }
 
+/** The area's satellite image as a texture, kept in sRGB values like the shader's colours. */
+function imageryTexture(area: Area): THREE.Texture {
+  if (!area.imagery) return new THREE.DataTexture(new Uint8Array(4), 1, 1);
+  const texture = new THREE.Texture(area.imagery);
+  texture.flipY = false;
+  texture.generateMipmaps = true;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.anisotropy = 8;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 export function createGround(area: Area): Ground {
   const { meta, heights } = area;
   const w = meta.width;
@@ -268,6 +311,14 @@ export function createGround(area: Area): Ground {
     areaSize: { value: new THREE.Vector2(area.sizeX, area.sizeZ) },
     coverTexel: { value: meta.coverTexel },
     fieldSize: { value: 140 },
+    imageryTex: { value: imageryTexture(area) },
+    imagerySize: {
+      value: new THREE.Vector2(
+        (meta.imagery?.width ?? 1) * (meta.imagery?.pixel ?? 1),
+        (meta.imagery?.height ?? 1) * (meta.imagery?.pixel ?? 1),
+      ),
+    },
+    useImagery: { value: area.imagery ? 1 : 0 },
   };
 
   const material = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0 });
