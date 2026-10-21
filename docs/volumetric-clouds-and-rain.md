@@ -25,6 +25,14 @@ Two findings from the sample matter for rendering:
 - **The 3D cloud field stops at 6 km.** In that sample, 39% of the cloudy columns still had more than 30% cloud at the 6,000 m level. Thunderstorm tops normally go well above 6 km, so tops and anvils have to come from the high-cloud band, the humidity fields or art direction.
 - **The vertical spacing is coarse aloft.** Levels are 5–50 m apart near the ground but 250–500 m apart above 1 km, so the data gives the envelope of a cloud, and noise has to supply the billows. The horizontal grid is 2 km, so a single fair-weather cumulus (often under 1 km across) is sub-grid and must also come from noise.
 
+![Map of the highest UKV level with cloud fraction above 0.3](images/ukv-cloud-top-map.png)
+
+The map shows the highest level in each column with more than 30% cloud. Yellow areas inside the red outline still have cloud at the 6 km cap, so their real tops are unknown. Large continuous bands reach the cap, while the scattered cells to the south-west top out at 1 to 3 km.
+
+![West-east cross-section of UKV cloud fraction along LAEA y = 0](images/ukv-cloud-cross-section.png)
+
+The cross-section along the orange line shows the data's vertical structure. The columns of near-solid cloud over Northern Ireland and over the Scotland–England border run straight into the 6 km ceiling. The horizontal striping is the level spacing becoming coarser with height. The heaviest rain on this line (11.6 mm/h) sits under the deepest cloud, which is the link the rain shafts should follow.
+
 The band heights come from the Met Office datasheet for this dataset. That datasheet is older than the bucket: it omits the height-level cloud, cloud base, hail and lightning files that the live bucket has. The max rain rate in the sample was 24.7 mm/h, and about 10% of cells had over 1 mm/h.
 
 ## Deriving cloud type
