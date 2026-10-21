@@ -40,7 +40,7 @@ UKV has no cloud-type field, so the type is implied by these fields rather than 
 - Cloud fraction from the volume sets the coverage. Perlin–Worley shape noise and Worley detail noise from the cloud
   lab carve it into billows, so a 2 km grid cell does not look like a block. Detail fades out with distance.
 - Clouds sit above the terrain (heights are AGL). The vertical scale follows the map's terrain exaggeration, and the
-  "Cloud height" slider scales the cloud layer on its own (default 2).
+  "Cloud height" slider scales the cloud layer on its own (default 3).
 - Lighting: sun march for self-shadowing, two-lobe Henyey–Greenstein phase, multiple-scattering octaves, powder
   term, and energy-conserving integration (Hillaire).
 - Rain below the cloud base uses Shipley's extinction, σ = 0.16 R^0.74 per km, with vertical streak noise. Raining

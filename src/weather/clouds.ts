@@ -205,7 +205,7 @@ export function createCloudLayer(
 
   let frames = 0;
   let exaggeration = 1;
-  let cloudScale = 2;
+  let cloudScale = 3;
   const lastView = new THREE.Matrix4();
   const lastProjection = new THREE.Matrix4();
 
@@ -308,7 +308,7 @@ export function mountCloudControls(hud: HTMLElement, layer: CloudLayer, meta: Uk
   const box = document.createElement('div');
   box.innerHTML = `
     <label><input type="checkbox" checked /> Clouds and rain</label>
-    <label>Cloud height <input type="range" min="1" max="6" step="0.5" value="2" /> <output>2×</output></label>
+    <label>Cloud height <input type="range" min="1" max="6" step="0.5" value="3" /> <output>3×</output></label>
     <p class="hint"></p>`;
   const [toggle, scale] = Array.from(box.querySelectorAll('input'));
   const output = box.querySelector('output')!;
