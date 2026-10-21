@@ -1,0 +1,59 @@
+{
+  "proj": "+proj=laea +lat_0=54.9 +lon_0=-2.5 +x_0=0 +y_0=0 +ellps=GRS80 +units=m",
+  "xMin": -15850,
+  "xMax": 9500,
+  "yMin": 22300,
+  "yMax": 47875,
+  "spacing": 25,
+  "width": 1015,
+  "height": 1024,
+  "coverTexel": 8,
+  "coverWidth": 3169,
+  "coverHeight": 3197,
+  "minHeight": 0.64,
+  "maxHeight": 600.2793716522445,
+  "buildings": 1158,
+  "buildingStats": {
+    "total": 1177,
+    "osm": 725,
+    "osm_levels": 25,
+    "osm_height": 326,
+    "ml": 452
+  },
+  "trees": 478,
+  "hasCoast": true,
+  "classes": {
+    "sea": 0,
+    "fields": 1,
+    "park": 2,
+    "broadleaf": 3,
+    "conifer": 4,
+    "heath": 5,
+    "rock": 6,
+    "sand": 7,
+    "wetland": 8,
+    "water": 9,
+    "urban": 10,
+    "industrial": 11,
+    "minor_road": 12,
+    "major_road": 13,
+    "farmyard": 14,
+    "rail": 15,
+    "path": 16
+  },
+  "attribution": "Overture Maps Foundation (incl. \u00a9 OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles; Contains modified Copernicus Sentinel data",
+  "imagery": {
+    "pixel": 10,
+    "width": 2535,
+    "height": 2558,
+    "scenes": 14
+  },
+  "boundaries": {
+    "hedgeKm": 3.6,
+    "wallKm": 319.4
+  },
+  "roads": {
+    "pieces": 1675,
+    "km": 1312.5
+  }
+}

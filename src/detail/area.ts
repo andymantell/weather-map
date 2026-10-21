@@ -40,6 +40,20 @@ export interface Area {
   sizeZ: number;
 }
 
+/**
+ * `?terrain=before` loads the tiles' buildings, street blocks, land cover and trees as they
+ * were before the lidar heights, Forest Inventory and habitat data went in
+ * (public/data/detail-before/), for comparing the two.
+ */
+export const TERRAIN_BEFORE = new URLSearchParams(location.search).get('terrain') === 'before';
+const BEFORE_FILES = new Set(['meta.json', 'cover.png', 'buildings.bin', 'trees.bin', 'masses-10.bin', 'masses-18.bin']);
+
+/** URL of one of an area's data files, honouring TERRAIN_BEFORE. */
+export function detailUrl(baseUrl: string, name: string, file: string): string {
+  const set = TERRAIN_BEFORE && BEFORE_FILES.has(file) ? 'detail-before' : 'detail';
+  return `${baseUrl}data/${set}/${name}/${file}`;
+}
+
 async function pixels(url: string): Promise<Uint8ClampedArray> {
   const blob = await fetch(url).then((r) => r.blob());
   const bitmap = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
@@ -50,16 +64,16 @@ async function pixels(url: string): Promise<Uint8ClampedArray> {
 }
 
 export async function loadArea(baseUrl: string, name: string): Promise<Area> {
-  const dir = `${baseUrl}data/detail/${name}/`;
+  const url = (file: string) => detailUrl(baseUrl, name, file);
   const [meta, heightPx, coverPx, buildings, trees] = await Promise.all([
-    fetch(`${dir}meta.json`).then((r) => r.json() as Promise<AreaMeta>),
-    pixels(`${dir}height.png`),
-    pixels(`${dir}cover.png`),
-    fetch(`${dir}buildings.bin`).then((r) => r.arrayBuffer()),
-    fetch(`${dir}trees.bin`).then((r) => r.arrayBuffer()),
+    fetch(url('meta.json')).then((r) => r.json() as Promise<AreaMeta>),
+    pixels(url('height.png')),
+    pixels(url('cover.png')),
+    fetch(url('buildings.bin')).then((r) => r.arrayBuffer()),
+    fetch(url('trees.bin')).then((r) => r.arrayBuffer()),
   ]);
   const imagery = meta.imagery
-    ? await fetch(`${dir}imagery.jpg`)
+    ? await fetch(url('imagery.jpg'))
         .then((r) => r.blob())
         .then((b) => createImageBitmap(b, { imageOrientation: 'none' }))
     : null;

@@ -1,14 +1,19 @@
 // Screenshots and frame times for the detailed terrain (docs/terrain-detail.md), taken in a real,
 // GPU-backed Chrome window. Start the dev server first (npm run dev), then:
 //
-//   npm i --no-save playwright && node scripts/detail/gpu-shots.mjs [http://localhost:5173/]
+//   npm i --no-save playwright && node scripts/detail/gpu-shots.mjs [http://localhost:5173/] [--before]
 //
 // Writes docs/images/terrain-detail/<view>.jpg (not committed) and prints frame times as JSON.
+// --before loads the tiles' older data (?terrain=before) into docs/images/terrain-detail/before/,
+// for side-by-side comparison.
 import fs from 'node:fs';
 import { chromium } from 'playwright';
 
-const url = process.argv[2] ?? 'http://localhost:5173/';
-const out = 'docs/images/terrain-detail';
+const args = process.argv.slice(2);
+const before = args.includes('--before');
+const base = args.find((a) => !a.startsWith('--')) ?? 'http://localhost:5173/';
+const url = before ? `${base}${base.includes('?') ? '&' : '?'}terrain=before` : base;
+const out = before ? 'docs/images/terrain-detail/before' : 'docs/images/terrain-detail';
 fs.mkdirSync(out, { recursive: true });
 
 // heading: compass bearing in radians the camera faces; height: km above the ground.

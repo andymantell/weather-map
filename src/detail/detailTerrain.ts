@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GroundSampler } from '../camera/groundSampler';
-import { type Area, heightAt, loadArea } from './area';
+import { type Area, detailUrl, heightAt, loadArea } from './area';
 import {
   type Building,
   createFootprints,
@@ -135,10 +135,9 @@ function createSkirt(area: Area): THREE.Mesh {
 
 async function createTile(baseUrl: string, name: string, coarse: GroundSampler, coarseScale: number): Promise<Tile> {
   const area = await loadArea(baseUrl, name);
-  const dir = `${baseUrl}data/detail/${name}/`;
   const [fine, coarseMasses, boundaryData, roadData] = await Promise.all(
     ['masses-10', 'masses-18', 'boundaries', 'roads'].map((f) =>
-      fetch(`${dir}${f}.bin`).then((r) => (r.ok ? r.arrayBuffer() : null)),
+      fetch(detailUrl(baseUrl, name, `${f}.bin`)).then((r) => (r.ok ? r.arrayBuffer() : null)),
     ),
   );
   blendEdges(area, coarse, coarseScale);
