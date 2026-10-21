@@ -387,7 +387,7 @@ export function createCloudLayer(
 }
 
 /** Adds the cloud switch, cloud height and opacity sliders, outline switch and source line to the HUD. */
-export function mountCloudControls(hud: HTMLElement, layer: CloudLayer, meta: UkvCloudMeta): void {
+export function mountCloudControls(hud: HTMLElement, layer: CloudLayer, meta: UkvCloudMeta, live = false): void {
   const box = document.createElement('div');
   box.innerHTML = `
     <label><input type="checkbox" checked /> Clouds and rain</label>
@@ -408,6 +408,8 @@ export function mountCloudControls(hud: HTMLElement, layer: CloudLayer, meta: Uk
   });
   outline.addEventListener('change', () => layer.setOutline(outline.checked));
   const valid = new Date(meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
-  box.querySelector('p')!.textContent = `UKV cloud and rain, valid ${valid} UTC (fixed hour for now).`;
+  box.querySelector('p')!.textContent = live
+    ? 'UKV cloud and rain for the next hour; move the time slider below.'
+    : `UKV cloud and rain, valid ${valid} UTC (fixed hour for now).`;
   hud.appendChild(box);
 }

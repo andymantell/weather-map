@@ -9,6 +9,7 @@ import { createDetailTerrain, type DetailTerrain } from './detail/detailTerrain'
 import { createSea, createTerrain, setDetailRects } from './terrain';
 import { createCloudLayer, loadUkvClouds, mountCloudControls, type CloudLayer } from './weather/clouds';
 import { createRainLayer, mountRainControls, type RainLayer } from './weather/rain/rain';
+import { loadUkvLive, mountTimeControls, type UkvLive } from './weather/ukvLive';
 import './style.css';
 
 const container = document.getElementById('app')!;
@@ -68,11 +69,22 @@ let exaggeration = 1;
 let animatedRain: RainLayer | undefined;
 
 async function init() {
-  const [heightmap, rainField, cloudData] = await Promise.all([
-    loadHeightmap(import.meta.env.BASE_URL),
-    loadRainField(import.meta.env.BASE_URL),
-    loadUkvClouds(import.meta.env.BASE_URL),
-  ]);
+  // ?live reads the next hour of UKV straight from the Met Office bucket; ?live=2026-10-21T18:00Z picks the hour.
+  const liveParam = new URLSearchParams(location.search).get('live');
+  let live: UkvLive | undefined;
+  let heightmap, rainField, cloudData;
+  if (liveParam === null) {
+    [heightmap, rainField, cloudData] = await Promise.all([
+      loadHeightmap(import.meta.env.BASE_URL),
+      loadRainField(import.meta.env.BASE_URL),
+      loadUkvClouds(import.meta.env.BASE_URL),
+    ]);
+  } else {
+    heightmap = await loadHeightmap(import.meta.env.BASE_URL);
+    loading.textContent = 'Reading UKV from the Met Office bucket…';
+    live = await loadUkvLive(heightmap.meta, liveParam ? new Date(liveParam) : new Date());
+    ({ rainField, data: cloudData } = live);
+  }
   const projection = new Projection(heightmap.meta.proj);
 
   const terrain = createTerrain(heightmap);
@@ -91,11 +103,20 @@ async function init() {
   // The volumetric clouds show the rain, so the flat rain overlay starts hidden.
   rainInput.checked = rain.visible = false;
   clouds = createCloudLayer(renderer, scene, camera, cloudData, heightmap, sunDirection);
-  mountCloudControls(document.getElementById('hud')!, clouds, cloudData.meta);
+  mountCloudControls(document.getElementById('hud')!, clouds, cloudData.meta, !!live);
   animatedRain = createRainLayer(renderer, camera, clouds, cloudData, heightmap, (x, z) => rig!.sampler.heightAt(x, z));
   mountRainControls(document.getElementById('hud')!, animatedRain);
-  const validTime = new Date(rainField.meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
-  rainInfo.textContent = `UKV precipitation rate, valid ${validTime} UTC. ${rainField.meta.attribution}.`;
+  const showValidTime = () => {
+    const validTime = new Date(rainField.meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
+    rainInfo.textContent = `UKV precipitation rate, valid ${validTime} UTC. ${rainField.meta.attribution}.`;
+  };
+  showValidTime();
+  if (live) {
+    mountTimeControls(document.getElementById('hud')!, live, () => {
+      clouds!.invalidate();
+      showValidTime();
+    });
+  }
 
   setExaggeration = (value: number) => {
     exaggeration = value;
@@ -132,7 +153,7 @@ async function init() {
     })
     .catch((error) => console.error('Detailed terrain failed to load', error));
   // Handles for driving the view from the console or screenshot scripts.
-  if (import.meta.env.DEV) Object.assign(window, { camera, rig, projection, scene, clouds, rain: animatedRain, renderer });
+  if (import.meta.env.DEV) Object.assign(window, { camera, rig, projection, scene, clouds, rain: animatedRain, renderer, live });
 }
 
 window.addEventListener('resize', () => {

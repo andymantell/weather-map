@@ -52,14 +52,11 @@ What the browser would have to do, and what I measured about the files:
 
 Open points, not yet prototyped:
 
-- Reading HDF5 needs a library or a small custom reader. `h5wasm` (HDF5 compiled to
-  WebAssembly) and `jsfive` (pure JS) both read from a whole file in memory according to their
-  READMEs. That's fine for the 2D fields. Range-reading the cloud volume and the wave chunks needs
-  the chunk index from the HDF5 B-tree, which means either a small custom reader or a library I
-  haven't verified. This is the first thing to prototype.
+- Reading HDF5: prototyped on 21 October 2026 with a small custom range reader, see
+  [in-browser-netcdf.md](in-browser-netcdf.md). It reads only the chunks over the map and matches h5py exactly.
 - Visitor download size goes up. The pre-baked weather textures in `public/data` total about
-  7 MB. Direct reads would be roughly 12 to 25 MB per visit, depending on how much range reading
-  works. That traffic comes out of the Met Office's open-data bucket, which AWS's Open Data
+  7 MB. Direct reads measured 29 to 41 MB for the next hour (the 3D cloud volume is most of it), more than the
+  12 to 25 MB first guessed; see [in-browser-netcdf.md](in-browser-netcdf.md). That traffic comes out of the Met Office's open-data bucket, which AWS's Open Data
   programme pays for, not us.
 - The data is "free and unsupported" (the AWS registry entry). If the bucket layout changes,
   the app breaks until it's fixed. For a toy that's acceptable.
@@ -84,8 +81,9 @@ Checked on 21 October 2026, looking for any fair-use rule for the open-data buck
   outright who pays egress for this particular bucket, so I don't know that for certain.
 
 Nothing forbids browser reads, and the CORS settings suggest they're expected. But every visitor
-fetching 12 to 25 MB straight from a free beta service scales with our traffic: 1,000 visits is
-about 20 GB a month, and 100,000 visits would be about 2 TB. Mirroring with the Lambda fallback
+fetching 29 to 41 MB (measured, see [in-browser-netcdf.md](in-browser-netcdf.md)) straight from a free beta
+service scales with our traffic: 1,000 visits is about 30 to 40 GB a month, and 100,000 visits would be about
+3 to 4 TB. Mirroring with the Lambda fallback
 below caps it at one download per hour, about 25 MB an hour or 18 GB a month, whatever our
 traffic. The plan is to read directly while traffic is small, and switch to the mirror if the map
 gets real use or the Met Office asks. Emailing the service desk to check is cheap.
@@ -285,9 +283,8 @@ nothing on live data. If a rendering technique ever needs compute, try the WebGP
 
 ## Next steps
 
-1. Prototype the in-browser reader on the 2D UKV fields first (whole-file reads), then range
-   reads for the cloud volume and wave chunks. Measure download size and decode time on a
-   phone and on the laptop.
+1. Done for UKV: [in-browser-netcdf.md](in-browser-netcdf.md) (`?live` in the app). Still to do: the wave
+   chunks, and timing on a phone and on the laptop.
 2. Point the app at a configurable data base URL (the bake handoff already proposes
    `VITE_DETAIL_URL`) so the same build works locally and on CloudFront.
 3. When the bake is done and Andy says go: create the bucket and distribution, choose the Free
