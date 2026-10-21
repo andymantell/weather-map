@@ -12,6 +12,8 @@ export default defineConfig({
         main: fileURLToPath(new URL('index.html', import.meta.url)),
         // Terrain, towns and forests proof of concept (docs/terrain-towns-forests-poc.md).
         terrainPoc: fileURLToPath(new URL('poc/terrain/index.html', import.meta.url)),
+        // Cloud lab for tuning each cloud type (docs/cloud-lab.md).
+        clouds: fileURLToPath(new URL('clouds.html', import.meta.url)),
       },
     },
   },

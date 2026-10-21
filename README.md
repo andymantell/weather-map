@@ -13,6 +13,9 @@ npm run dev      # local dev server
 npm run build    # type-check and build static files into dist/
 ```
 
+`/clouds.html` is the cloud lab, a test page for tuning how each cloud type looks. See
+[`docs/cloud-lab.md`](docs/cloud-lab.md).
+
 ## Coordinates
 
 The scene uses the same Lambert Azimuthal Equal Area projection as the UKV 2 km grid
