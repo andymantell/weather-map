@@ -241,6 +241,7 @@ export function createCloudLayer(
   let frames = 0;
   let exaggeration = 1;
   let cloudScale = 3;
+  let opacity = 0.75;
   const lastView = new THREE.Matrix4();
   const lastProjection = new THREE.Matrix4();
   // The history is garbage until the first frame after a resize or a change to the clouds.
@@ -269,7 +270,7 @@ export function createCloudLayer(
       updateTop();
     },
     setOpacity(value) {
-      compositeMaterial.uniforms.uOpacity.value = value;
+      opacity = value;
     },
     setOutline(on) {
       compositeMaterial.uniforms.uOutline.value = on ? 1 : 0;
@@ -298,6 +299,13 @@ export function createCloudLayer(
       const moving =
         !nearlyEqual(camera.matrixWorld, lastView) || !nearlyEqual(camera.projectionMatrix, lastProjection);
       if (moving) frames = 0;
+
+      // The opacity setting is a map-view aid. From inside or under the cloud a see-through deck looks wrong, so
+      // ramp to fully opaque as the camera descends from twice the cloud top to the cloud top.
+      const top = cloudMaterial.uniforms.uYTop.value;
+      const camY = camera.matrixWorld.elements[13];
+      const descent = THREE.MathUtils.smoothstep(camY, top, top * 2);
+      compositeMaterial.uniforms.uOpacity.value = THREE.MathUtils.lerp(1, opacity, descent);
 
       renderer.setRenderTarget(sceneTarget);
       renderer.render(scene, camera);
