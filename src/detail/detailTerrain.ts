@@ -92,7 +92,7 @@ function blendEdges(area: Area, coarse: GroundSampler, coarseScale: number) {
 }
 
 /** A curtain around the tile from its edge heights down by SKIRT metres. */
-function createSkirt(area: Area, material: THREE.Material): THREE.Mesh {
+function createSkirt(area: Area): THREE.Mesh {
   const { meta, heights } = area;
   const ring: [number, number][] = [];
   for (let i = 0; i < meta.width; i++) ring.push([i, 0]);
@@ -115,6 +115,8 @@ function createSkirt(area: Area, material: THREE.Material): THREE.Mesh {
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
+  // Seen through pixel cracks from either side, so double sided, in the far patchwork's colour.
+  const material = new THREE.MeshStandardMaterial({ color: '#5d6a2e', roughness: 1, side: THREE.DoubleSide });
   const mesh = new THREE.Mesh(geometry, material);
   mesh.receiveShadow = true;
   return mesh;
@@ -136,7 +138,7 @@ async function createTile(baseUrl: string, name: string, coarse: GroundSampler, 
 
   const uniforms: ScaledUniforms = { terrainScale: { value: coarseScale }, buildingScale: { value: 1 } };
   const g = createGround(area);
-  const skirt = createSkirt(area, g.material);
+  const skirt = createSkirt(area);
   group.add(g.mesh, skirt);
 
   const tile: Tile = {

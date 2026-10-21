@@ -136,8 +136,13 @@ const terrainUniforms = {
  * where detailed tiles draw their own ground.
  */
 export function setDetailRects(rects: THREE.Vector4[]) {
+  // Inset so the coarse ground runs a little under each tile's edge (where the tile has blended
+  // to the same heights) and no pixel cracks open between the two.
+  const inset = 0.04;
   terrainUniforms.uDetailRects.value.forEach((r, i) =>
-    rects[i] ? r.copy(rects[i]) : r.set(1e9, 1e9, -1e9, -1e9),
+    rects[i]
+      ? r.set(rects[i].x + inset, rects[i].y + inset, rects[i].z - inset, rects[i].w - inset)
+      : r.set(1e9, 1e9, -1e9, -1e9),
   );
 }
 
@@ -161,15 +166,15 @@ void groundDetail(inout vec3 colour) {
   // Metres per pixel: the detail fades out before it would shimmer.
   float footprint = length(fwidth(p));
   // Hedges and furrows fade first (in fieldColour); whole fields go when they are a few pixels wide.
-  float fade = 1.0 - smoothstep(25.0, 80.0, footprint);
+  // The patchwork's average colour carries on to the far distance; only the map view keeps
+  // the plain hypsometric colours.
+  float fade = 1.0 - smoothstep(300.0, 1200.0, footprint);
   // Beyond that, a broad mottle of farmland and moor keeps the land from looking flat.
   float mottle = fbm(vTerrainWorld.xz / 1.8) * 0.6 + fbm(vTerrainWorld.xz / 7.0) * 0.4;
   colour *= 1.0 + (0.36 * mottle - 0.18) * (1.0 - smoothstep(300.0, 1200.0, footprint));
   if (fade <= 0.0) return;
   float rough;
-  float fieldSize = 160.0;
-  vec2 f = fields(p / fieldSize + vec2(fbm(p / 300.0), fbm(p / 300.0 + 5.0)) * 0.6);
-  vec3 lowland = fieldColour(f.x, p, f.y, fieldSize, rough);
+  vec3 lowland = patchwork(p, 160.0, rough);
   vec3 a = vec3(0.36, 0.30, 0.20), b = vec3(0.32, 0.25, 0.27), g = vec3(0.40, 0.40, 0.20);
   float n = fbm(p / 9.0);
   vec3 moor = mix(mix(a, b, smoothstep(0.35, 0.65, fbm(p / 40.0))), g, smoothstep(0.55, 0.8, n)) * (0.85 + 0.3 * vnoise(p / 1.7));

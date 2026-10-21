@@ -165,7 +165,8 @@ export const fragmentPars = /* glsl */ `
         vec2 kv = round(u * kj * SEA_TILE / SEA_TAU) * SEA_TAU / SEA_TILE;
         float km = length(kv);
         // Finite-depth dispersion: waves slow and shorten over shallow water.
-        float om = sqrt(SEA_G * km * tanh(km * depth));
+        // tanh saturates by 10; larger arguments overflow to NaN on some GPUs.
+        float om = sqrt(SEA_G * km * tanh(min(km * depth, 10.0)));
         float phase = dot(kv, p) - om * t + SEA_TAU * seaHash(float(b * SEA_DIRS + d) + 17.0);
         o.eta += a * cos(phase);
         o.windEta += a * cos(phase) * spreadW / max(spreadW + spreadS, 1e-12);
@@ -219,7 +220,9 @@ export const fragmentMain = /* glsl */ `
                texture2D(uDetailDepth1, uv + vec2(0.0, t.y)).r - texture2D(uDetailDepth1, uv - vec2(0.0, t.y)).r);
       coastDistance = -h / max(length(g) / (2.0 * grid.z), 1e-3);
       // The fine DEM has no real bathymetry, so shoal towards the drawn coast at about 3%.
-      depth = min(depth, max(coastDistance, 0.0) * 0.03 + 0.5);
+      // Harbours and creeks the coarse mesh draws as land still get water depth.
+      float shoal = max(coastDistance, 0.0) * 0.03 + 0.5;
+      depth = coastDistance > 0.0 ? (depth > 0.0 ? min(depth, shoal) : shoal) : 0.0;
     }
 
     // Work in "model" metres. Realistic mode is a Froude-scaled copy of the real
