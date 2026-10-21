@@ -1,0 +1,21 @@
+{
+  "name": "weather-map",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "heightmap": "python3 scripts/build_heightmap.py"
+  },
+  "dependencies": {
+    "proj4": "^2.22.0",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "0.186.0",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.0"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "proj": "+proj=laea +lat_0=54.9 +lon_0=-2.5 +x_0=0 +y_0=0 +ellps=GRS80 +units=m",
+  "xMin": -640000,
+  "xMax": 440000,
+  "yMin": -640000,
+  "yMax": 720000,
+  "spacing": 1000,
+  "width": 1081,
+  "height": 1361,
+  "minHeight": -200.0,
+  "maxHeight": 1244.0,
+  "source": "AWS Terrain Tiles (Terrarium) zoom 8; coastline from Natural Earth 10m land"
+}
