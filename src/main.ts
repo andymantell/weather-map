@@ -6,6 +6,7 @@ import { Projection } from './projection';
 import { createRainPlane, loadRainField } from './rain';
 import { createOcean, mountSeaControls } from './sea/ocean';
 import { createSea, createTerrain } from './terrain';
+import { createCloudLayer, loadUkvClouds, mountCloudControls, type CloudLayer } from './weather/clouds';
 import './style.css';
 
 const container = document.getElementById('app')!;
@@ -61,10 +62,13 @@ sun.position.copy(sunDirection).multiplyScalar(1000);
 scene.add(sun);
 scene.add(new THREE.HemisphereLight('#cfe3f5', '#4a4636', 0.9));
 
+let clouds: CloudLayer | undefined;
+
 async function init() {
-  const [heightmap, rainField] = await Promise.all([
+  const [heightmap, rainField, cloudData] = await Promise.all([
     loadHeightmap(import.meta.env.BASE_URL),
     loadRainField(import.meta.env.BASE_URL),
+    loadUkvClouds(import.meta.env.BASE_URL),
   ]);
   const projection = new Projection(heightmap.meta.proj);
 
@@ -79,6 +83,10 @@ async function init() {
   const rain = createRainPlane(rainField, heightmap.meta);
   scene.add(rain);
   rainInput.addEventListener('change', () => (rain.visible = rainInput.checked));
+  // The volumetric clouds show the rain, so the flat rain overlay starts hidden.
+  rainInput.checked = rain.visible = false;
+  clouds = createCloudLayer(renderer, scene, camera, cloudData, heightmap, sunDirection);
+  mountCloudControls(document.getElementById('hud')!, clouds, cloudData.meta);
   const validTime = new Date(rainField.meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
   rainInfo.textContent = `UKV precipitation rate, valid ${validTime} UTC. ${rainField.meta.attribution}.`;
 
@@ -86,6 +94,7 @@ async function init() {
     terrain.scale.y = value;
     // Float the rain just above the highest (exaggerated) peak.
     rain.position.y = (heightmap.meta.maxHeight / 1000) * value + 1;
+    clouds?.setExaggeration(value);
     exaggerationValue.textContent = `${value}×`;
   };
   exaggerationInput.addEventListener('input', () => setExaggeration(Number(exaggerationInput.value)));
@@ -99,18 +108,20 @@ async function init() {
 
   loading.remove();
   // Handles for driving the view from the console or screenshot scripts.
-  if (import.meta.env.DEV) Object.assign(window, { camera, controls, scene });
+  if (import.meta.env.DEV) Object.assign(window, { camera, controls, scene, clouds });
 }
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  clouds?.resize();
 });
 
 renderer.setAnimationLoop(() => {
   controls.update();
-  renderer.render(scene, camera);
+  if (clouds) clouds.render();
+  else renderer.render(scene, camera);
 });
 
 init().catch((error) => {
