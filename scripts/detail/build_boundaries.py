@@ -2,8 +2,8 @@
 
 Writes public/data/detail/<area>/boundaries.bin from OpenStreetMap via Overture Maps:
 mapped hedges (barrier=hedge) and walls (barrier=wall), plus the outlines of mapped
-farmland and meadow where no hedge or wall is mapped along them, since in Devon nearly
-every field edge is a hedge bank and in the Cheviots a wall. Lines are cut where they
+farmland and meadow where no hedge or wall is mapped along them: walls in the uplands and
+the north, hedge banks elsewhere (see WALLS_ABOVE_M, WALLS_NORTH_OF). Lines are cut where they
 cross roads, buildings' land, water or the sea (from the area's cover.png), so none run
 down a street.
 
@@ -22,11 +22,15 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import shapely
 from PIL import Image
+from pyproj import Transformer
 
 import build_area as ba
 
-# Kind given to mapped field outlines with no hedge or wall along them.
-FIELD_EDGE = {"plymouth": 0, "kielder": 1}
+# Mapped field outlines with no hedge or wall along them become dry-stone walls in the uplands
+# and the north (Pennines, Lakes, Cheviots, Scotland) and hedge banks elsewhere (agreed with
+# Andy, 2026-10-21).
+WALLS_ABOVE_M = 250
+WALLS_NORTH_OF = 54.5  # latitude
 STEP = 4.0  # metres between points
 # Cover classes a boundary may not run through.
 BLOCKED = {ba.CLASSES[c] for c in ("sea", "water", "urban", "industrial", "minor_road", "major_road", "rail")}
@@ -96,9 +100,20 @@ def main(area):
         result += runs(line, 0)
     for line in walls:
         result += runs(line, 1)
+    rgb = np.asarray(Image.open(out / "height.png").convert("RGB"), dtype=np.float64)
+    heights = rgb[..., 0] * 256 + rgb[..., 1] + rgb[..., 2] / 256 - 32768
+    to_lonlat = Transformer.from_crs(ba.PROJ, "EPSG:4326", always_xy=True)
+
+    def edge_kind(line):
+        c = line.centroid
+        i = int(np.clip((c.x - meta["xMin"]) / meta["spacing"], 0, heights.shape[1] - 1))
+        j = int(np.clip((meta["yMax"] - c.y) / meta["spacing"], 0, heights.shape[0] - 1))
+        lat = to_lonlat.transform(c.x, c.y)[1]
+        return 1 if heights[j, i] > WALLS_ABOVE_M or lat > WALLS_NORTH_OF else 0
+
     if edge_union is not None:
         for line in getattr(edge_union, "geoms", [edge_union]):
-            result += runs(line, FIELD_EDGE[area])
+            result += runs(line, edge_kind(line))
     with open(out / "boundaries.bin", "wb") as f:
         for kind, pts in result:
             f.write(struct.pack("<HBB", len(pts), kind, 0))

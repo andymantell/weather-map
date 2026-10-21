@@ -33,7 +33,17 @@ CLASSES = {
     "track": 7, "footway": 8, "path": 8, "cycleway": 8, "bridleway": 8, "steps": 8, "pedestrian": 8,
 }
 # Default carriageway widths (m) per class when OSM has none.
-WIDTHS = [22, 14, 9, 8, 7, 6, 4, 3, 1.8]
+# Default width (m) of each OSM class when the way has no width tag. UK OSM maps motorways and
+# most dual carriageways as one line per carriageway, so these are per line: a motorway line is
+# three 3.65 m lanes plus a 3.3 m hard shoulder (DMRB CD 127), a single carriageway A road two
+# 3.65 m lanes, residential streets about 5.5 m (local design guides give 4.1 to 5.5 m), and
+# unclassified roads are mostly narrow rural lanes.
+WIDTHS = {
+    "motorway": 14, "trunk": 8.5, "primary": 7.3, "secondary": 6.5, "tertiary": 6,
+    "residential": 5.5, "living_street": 4.8, "unclassified": 4.5, "service": 3.5,
+    "track": 2.8, "footway": 1.8, "path": 1.5, "cycleway": 2, "bridleway": 2,
+    "steps": 1.5, "pedestrian": 4,
+}
 STEP = 4.0
 COLUMNS = ["subtype", "class", "road_flags", "road_surface", "width_rules", "geometry"]
 
@@ -85,7 +95,7 @@ def main(area):
         tunnels = ranges(row["road_flags"], {"is_tunnel"})
         bridges = ranges(row["road_flags"], {"is_bridge"})
         unpaved = bool(ranges(row["road_surface"], {"unpaved", "gravel", "dirt"})) or cls == 7
-        width = WIDTHS[cls]
+        width = WIDTHS[row["class"]]
         for w in row["width_rules"] or []:
             if w.get("value") and 1 < w["value"] < 40:
                 width = w["value"]
