@@ -190,7 +190,9 @@ allowing them, run the existing `pipeline/` scripts hourly in Lambda (a containe
 `netCDF4` and `pyproj` are large) in eu-west-2, triggered by EventBridge Scheduler, writing the
 PNG+JSON into the same bucket under `/weather/latest/`.
 
-- Assume one 60-second run a hour at 2 GB memory. That's not measured. 720 runs × 60 s × 2 GB
+- Now measured and costed in more detail, for many hours per run, in
+  [weather-bake-lambda.md](weather-bake-lambda.md) (about $0.20 a month). The original rough guess:
+  assume one 60-second run a hour at 2 GB memory. 720 runs × 60 s × 2 GB
   = 86,400 GB-s a month, inside the 400,000 GB-s free tier. Without the free tier it would be
   $1.44.
 - Reading the Met Office bucket from Lambda in the same region has no transfer charge.
