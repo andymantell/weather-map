@@ -8,9 +8,10 @@ cloud at T+3h).
 
 Use the free **Met Office UKV 2 km archive on AWS Open Data**. It needs no account and no API key. A small
 Python step (`ukv_to_grid.py`) downloads one NetCDF field per parameter and timestep. It quantises the values to
-16 bits and writes a lossless PNG plus a JSON sidecar. The app loads those like any other static
-asset. Run that step on a schedule in GitHub Actions and publish the outputs to GitHub Pages with the app. The
-browser never talks to the Met Office directly, so there is no key to leak and no CORS problem.
+16 bits and writes a lossless PNG plus a JSON sidecar. The app loads those like any other static asset. The
+processing step has to run server-side, because the browser can't read NetCDF. Hosting and deployment are on
+hold for now, and AWS is the likely home. The browser never talks to the Met Office directly, so there is no key
+to leak and no CORS problem.
 
 ## Data sources compared
 
@@ -134,17 +135,18 @@ tex.flipY = true;                         // PNG row 0 is north; UV v=1 is the t
 For CPU-side work, such as sampling a value under the cursor, draw the image to a canvas with
 `createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' })` and decode the same way.
 
-## Getting it onto GitHub Pages (next step, not built yet)
+## Running it on a schedule (later; hosting not decided)
 
-1. Add a scheduled GitHub Actions workflow, for example hourly at :20, that installs `requirements.txt`. It runs
-   `ukv_to_grid.py` for the chosen parameters and steps into the site's static data folder, then deploys with
-   the app.
+Deployment is on hold. AWS is the likely host, for example a scheduled job that writes to S3 behind CloudFront.
+Whatever runs it should:
+
+1. Run `ukv_to_grid.py` for the chosen parameters and steps after each new run lands, which is about 3 to 6
+   hours after the run time.
 2. Use a fixed `--range` per parameter, so that all timesteps share one encoding and an animation can blend
    between frames in the shader.
-3. Watch the size. At about 1.4 MB per field per step, 3 parameters over 24 hourly steps comes to about 100 MB per
-   deploy. That is within GitHub Pages' 1 GB site limit, but not by much. `--stride 2` (4 km) cuts each file to a
-   quarter. Cropping to the British Isles would help more, and the script could add a `--bbox` option for it.
-   Writing data to a separate `gh-pages` branch or storage would avoid bloating `main`'s history.
+3. Watch the size. Each field at each step is about 1.4 MB, so 3 parameters over 24 hourly steps comes to about
+   100 MB per run. `--stride 2` (4 km) cuts each file to a quarter. Cropping to the British Isles would help more,
+   and the script could add a `--bbox` option for it.
 
 ## Attribution
 
