@@ -23,7 +23,7 @@ included 5 GB. Reading the Met Office files directly in the browser also works (
 as the no-server fallback. The app
 itself could equally go on GitHub Pages for free, with only the tiles on CloudFront (see
 [GitHub Pages for the app](#github-pages-for-the-app)). If the map
-ever gets popular, move to the flat-rate Pro plan at $15/month, which still can't run away. A
+ever gets popular, move to the flat-rate Pro plan at $15/month, which still can't run away.
 The bake's compute sits inside Lambda's free allowance.
 
 ## Finding: the browser can read the Met Office buckets directly
@@ -58,8 +58,8 @@ Open points, not yet prototyped:
   [in-browser-netcdf.md](in-browser-netcdf.md). It reads only the chunks over the map and matches h5py exactly.
 - Visitor download size goes up. The pre-baked weather textures in `public/data` total about
   7 MB. Direct reads measured 29 to 41 MB for the next hour (the 3D cloud volume is most of it), more than the
-  12 to 25 MB first guessed; see [in-browser-netcdf.md](in-browser-netcdf.md). That traffic comes out of the Met Office's open-data bucket, which AWS's Open Data
-  programme pays for, not us.
+  12 to 25 MB first guessed; see [in-browser-netcdf.md](in-browser-netcdf.md). That traffic comes out of the Met Office's open-data bucket. It costs us nothing, but who pays
+  for it isn't confirmed (see below).
 - The data is "free and unsupported" (the AWS registry entry). If the bucket layout changes,
   the app breaks until it's fixed. For a toy that's acceptable.
 
@@ -89,6 +89,12 @@ service scales with our traffic: 1,000 visits is about 30 to 40 GB a month, and 
 reads each run once, from inside the same AWS region. Baking about 10 hours a run from whole files
 is about 285 MB a run, or about 200 GB a month; range-reading only the map's chunks, as the
 browser reader does, would roughly halve that. Emailing the service desk to check is cheap.
+
+That fixed cost is more than direct reads at low traffic. 200 GB a month equals about 5,000 to
+7,000 direct visits at 29 to 41 MB each, or about 2,500 to 3,500 with range reads. Below that,
+the bake puts more load on the Met Office bucket than visitors reading it directly would, not
+less. Baking fewer hours per run (e.g. three instead of ten) cuts it roughly in proportion. The
+bake still wins on visitor download size at any traffic.
 
 ## Architecture
 
@@ -204,8 +210,9 @@ cheaply. Measured and costed in [weather-bake-lambda.md](weather-bake-lambda.md)
   ($0.18). Storage for one or two runs is under $0.01. Reading the Met Office bucket from the
   same region is free.
 - **Per visit.** The next hour is 7 to 9 MB (against 29 to 41 MB read directly from the Met
-  Office files), and all 10 hours about 36 MB. At 7 to 9 MB, the Free plan's 100 GB covers about
-  10,000 visits a month.
+  Office files), and all 10 hours about 36 MB. At 7 to 9 MB, the Free plan's 100 GB would cover
+  about 10,000 visits a month for weather alone. Tiles share the same 100 GB, though, so with a
+  typical 25 MB of tiles a visit it's about 3,000 visits.
 - **Load on the Met Office bucket.** This also settles the question above: the bucket sees one
   download per run, whatever our traffic.
 - **Freshness.** No change. The bake can only start once a run is in the public bucket, about
