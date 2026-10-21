@@ -147,7 +147,7 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
   if (k == 2) return mix(vec3(0.27, 0.40, 0.15), vec3(0.34, 0.46, 0.20), n) * (0.95 + 0.05 * sin(p.x * 0.4)) * (0.9 + 0.2 * fine);
   if (k == 3 || k == 4) surfBump = (fbm(p / 3.0) * 0.8 + vnoise(p / 0.8) * 0.15) * bumpFade;
   if (k == 6) surfBump = (fbm(p / 2.0) * 1.2) * bumpFade;
-  if (k >= 10 && k != 14) surfBump = 0.0;
+  if (k >= 10 && k != 14 && k < 17) surfBump = 0.0;
   if (k == 3) return mix(vec3(0.12, 0.21, 0.07), vec3(0.22, 0.32, 0.11), n * 0.7 + fine * 0.3);
   if (k == 4) return mix(vec3(0.08, 0.15, 0.08), vec3(0.15, 0.24, 0.12), n * 0.7 + fine * 0.3);
   if (k == 5) {
@@ -178,6 +178,16 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
   if (k == 14) return vec3(0.40, 0.35, 0.27) * (0.85 + 0.3 * n);
   if (k == 15) return vec3(0.30, 0.26, 0.23) * (0.85 + 0.3 * fine);
   if (k == 16) return vec3(0.52, 0.47, 0.37);
+  if (k == 17) return mix(vec3(0.30, 0.32, 0.18), vec3(0.20, 0.28, 0.14), n) * (0.85 + 0.3 * fine);
+  if (k == 18) {
+    // Clear-fell: grey-brown brash, stumps and regrowth.
+    surfBump = (fbm(p / 1.5) * 0.6 + vnoise(p / 0.5) * 0.2) * bumpFade;
+    return mix(vec3(0.38, 0.32, 0.25), vec3(0.30, 0.30, 0.20), smoothstep(0.4, 0.7, n)) * (0.8 + 0.4 * fine);
+  }
+  if (k == 19) {
+    surfBump = (fbm(p / 3.0) * 0.8 + vnoise(p / 0.8) * 0.15) * bumpFade;
+    return mix(vec3(0.10, 0.19, 0.08), vec3(0.19, 0.29, 0.11), n * 0.7 + fine * 0.3);
+  }
   // Sea bed / foreshore under the water plane.
   return mix(vec3(0.45, 0.42, 0.33), vec3(0.20, 0.25, 0.24), 1.0 - smoothstep(-3.0, -0.5, vHeight));
 }
@@ -205,7 +215,7 @@ vec3 surfaceColour(vec2 p, out float rough) {
     k = side;
   }
   vec3 c = proceduralColour(p, k, rough);
-  bool natural = (k >= 1 && k <= 8) || k == 14;
+  bool natural = (k >= 1 && k <= 8) || k == 14 || k >= 17;
   if (useImagery < 0.5 || !natural) return c;
   vec2 edge = min(p, areaSize - p);
   float inside = smoothstep(0.0, 600.0, min(edge.x, edge.y));

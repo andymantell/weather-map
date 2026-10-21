@@ -136,8 +136,9 @@ export function createTrees(area: Area, opts: TreeOptions, uniforms: ScaledUnifo
   const C = area.meta.classes;
   const tilesX = Math.ceil(area.sizeX / TILE);
   const tilesZ = Math.ceil(area.sizeZ / TILE);
-  const buckets: { c: number[]; b: number[] }[] = [];
-  for (let i = 0; i < tilesX * tilesZ; i++) buckets.push({ c: [], b: [] });
+  // c conifer, b broadleaf, y young plantation (small conifers).
+  const buckets: { c: number[]; b: number[]; y: number[] }[] = [];
+  for (let i = 0; i < tilesX * tilesZ; i++) buckets.push({ c: [], b: [], y: [] });
   const [bx0, bz0, bx1, bz1] = opts.bounds ?? [0, 0, area.sizeX, area.sizeZ];
   // Seed from the bounds so a chunk always gets the same trees.
   let seed = (Math.abs((Math.floor(bx0) * 73856093) ^ (Math.floor(bz0) * 19349663)) % 2147483646) + 1;
@@ -155,6 +156,8 @@ export function createTrees(area: Area, opts: TreeOptions, uniforms: ScaledUnifo
       const t = Math.min(Math.floor(pz / TILE), tilesZ - 1) * tilesX + Math.min(Math.floor(px / TILE), tilesX - 1);
       if (k === C.conifer) buckets[t].c.push(px, pz);
       else if (k === C.broadleaf) buckets[t].b.push(px, pz);
+      else if (k === C.mixed) buckets[t][rand() < 0.55 ? 'c' : 'b'].push(px, pz);
+      else if (k === C.young) buckets[t].y.push(px, pz);
       else if ((k === C.urban || k === C.park) && rand() < 0.04 / s) buckets[t].b.push(px, pz);
     }
   }
@@ -194,7 +197,7 @@ export function createTrees(area: Area, opts: TreeOptions, uniforms: ScaledUnifo
   const depthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
   depthMaterial.onBeforeCompile = material.onBeforeCompile;
 
-  const geos = { c: conifer(), b: broadleaf() };
+  const geos = { c: conifer(), b: broadleaf(), y: conifer() };
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const up = new THREE.Vector3(0, 1, 0);
@@ -203,19 +206,19 @@ export function createTrees(area: Area, opts: TreeOptions, uniforms: ScaledUnifo
   for (const [t, bucket] of buckets.entries()) {
     // Chunk centre in local metres, so callers can show or hide chunks by distance.
     const centre = new THREE.Vector3(((t % tilesX) + 0.5) * TILE, 0, (Math.floor(t / tilesX) + 0.5) * TILE);
-    for (const kind of ['c', 'b'] as const) {
+    for (const kind of ['c', 'b', 'y'] as const) {
       const pts = bucket[kind];
       const n = pts.length / 2;
       if (!n) continue;
       const geo = geos[kind].clone();
       const bases = new Float32Array(n);
       const mesh = new THREE.InstancedMesh(geo, material, n);
-      const greens = kind === 'c' ? CONIFER_GREENS : BROAD_GREENS;
+      const greens = kind === 'b' ? BROAD_GREENS : CONIFER_GREENS;
       for (let i = 0; i < n; i++) {
         const x = pts[i * 2];
         const z = pts[i * 2 + 1];
         bases[i] = heightAt(area, x, z) - 0.5;
-        const h = (kind === 'c' ? 14 + rand() * 9 : 9 + rand() * 10) * s;
+        const h = (kind === 'c' ? 14 + rand() * 9 : kind === 'y' ? 2.5 + rand() * 4 : 9 + rand() * 10) * s;
         q.setFromAxisAngle(up, rand() * Math.PI * 2);
         mesh.setMatrixAt(i, m.compose(pos.set(x, 0, z), q, scl.set(h * (0.9 + rand() * 0.25), h, h)));
         mesh.setColorAt(i, greens[Math.floor(rand() * greens.length)]);

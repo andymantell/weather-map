@@ -31,6 +31,7 @@ import pyarrow.dataset as ds
 import pyarrow.fs as pafs
 import pyarrow.parquet as pq
 import shapely
+import shapely.geometry
 from PIL import Image, ImageDraw
 from scipy.ndimage import distance_transform_edt
 from pyproj import Transformer
@@ -49,14 +50,51 @@ AREAS = {
 CLASSES = dict(
     sea=0, fields=1, park=2, broadleaf=3, conifer=4, heath=5, rock=6, sand=7,
     wetland=8, water=9, urban=10, industrial=11, minor_road=12, major_road=13,
-    farmyard=14, rail=15, path=16,
+    farmyard=14, rail=15, path=16, young=17, felled=18, mixed=19,
 )
+
+
+# National Forest Inventory interpreted forest types (IFT) to cover classes.
+NFI_TYPES = {
+    "conifer": "conifer", "broadleaved": "broadleaf", "mixed mainly conifer": "mixed",
+    "mixed mainly broadleaved": "mixed", "coppice": "broadleaf", "coppice with standards": "broadleaf",
+    "young trees": "young", "felled": "felled", "ground prep": "felled", "windblow": "felled",
+    "failed": "young", "shrub": "heath", "low density": "young",
+}
+# Priority Habitats Inventory main habitats (lower case, prefix match) to cover classes.
+PHI_TYPES = {
+    "upland heathland": "heath", "lowland heathland": "heath", "mountain heaths": "heath",
+    "grass moorland": "heath", "fragmented heath": "heath", "blanket bog": "wetland",
+    "lowland raised bog": "wetland", "upland flushes": "wetland", "lowland fens": "wetland",
+    "reedbeds": "wetland", "purple moor grass": "wetland", "coastal and floodplain grazing marsh": "wetland",
+    "coastal sand dunes": "sand", "maritime cliff": "heath", "limestone pavement": "rock",
+    "inland rock": "rock",
+}
+
+
+def external_features(area_name, kind, table):
+    """Polygons from fetch_external.py's GeoJSON, projected, with a cover class each."""
+    path = EXTERNAL / f"{area_name}_{kind}.geojson"
+    if not path.exists():
+        return []
+    out = []
+    for f in json.loads(path.read_text())["features"]:
+        values = [str(v).strip().lower() for v in (f.get("properties") or {}).values() if isinstance(v, str)]
+        cls = next((table[v] for v in values if v in table), None)
+        if cls is None:
+            cls = next((c for v in values for name, c in table.items() if v.startswith(name)), None)
+        if cls is None or not f.get("geometry"):
+            continue
+        g = shapely.geometry.shape(f["geometry"])
+        out.append((shapely.transform(g, lambda c: np.column_stack(from_lonlat.transform(c[:, 0], c[:, 1]))), cls))
+    return out
 
 UPLAND_SHRUB = 200  # temporary class while rasterising
 UPLAND_M = 250
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE = ROOT / ".cache" / "detail"
+EXTERNAL = CACHE / "external"
 
 to_lonlat = Transformer.from_crs(PROJ, "EPSG:4326", always_xy=True)
 from_lonlat = Transformer.from_crs("EPSG:4326", PROJ, always_xy=True)
@@ -176,6 +214,48 @@ def building_height(row, area):
     return 3.0 if area < 40 else 6.5 if area < 250 else 9.0
 
 
+class LidarHeights:
+    """Building heights measured from the Environment Agency lidar (fetch_external.py), England.
+
+    The 90th percentile of height above ground (first-return DSM minus DTM) inside the
+    footprint shrunk by 1 m, so walls, eaves and overhanging trees at the edge don't count.
+    """
+
+    def __init__(self, area_name):
+        self.src = None
+        path = EXTERNAL / f"{area_name}_ndsm.tif"
+        if path.exists():
+            import rasterio
+            self.src = rasterio.open(path)
+            self.data = self.src.read(1)
+            self.to_bng = Transformer.from_crs(PROJ, "EPSG:27700", always_xy=True)
+
+    def height(self, footprint):
+        if self.src is None:
+            return None
+        g = shapely.transform(footprint, lambda c: np.column_stack(self.to_bng.transform(c[:, 0], c[:, 1])))
+        inner = g.buffer(-1.0)
+        if inner.is_empty:
+            inner = g
+        x0, y0, x1, y1 = inner.bounds
+        r0, c0 = self.src.index(x0, y1)
+        r1, c1 = self.src.index(x1, y0)
+        r0, c0 = max(r0, 0), max(c0, 0)
+        r1, c1 = min(r1 + 1, self.data.shape[0]), min(c1 + 1, self.data.shape[1])
+        if r1 <= r0 or c1 <= c0:
+            return None
+        win = self.data[r0:r1, c0:c1]
+        res = self.src.res[0]
+        ys = self.src.bounds.top - (np.arange(r0, r1) + 0.5) * res
+        xs = self.src.bounds.left + (np.arange(c0, c1) + 0.5) * res
+        px, py = np.meshgrid(xs, ys)
+        inside = shapely.contains_xy(inner, px, py) & (win >= 0)
+        if inside.sum() < 3:
+            return None
+        h = float(np.percentile(win[inside], 90)) / 10
+        return h if 2.0 <= h <= 250 else None
+
+
 def main(area_name):
     cfg = AREAS[area_name]
     bbox, spacing, texel = cfg["bbox"], cfg["spacing"], cfg["texel"]
@@ -271,6 +351,22 @@ def main(area_name):
     cover_arr[shrub] = np.where(high[shrub], C["heath"], C["fields"])
     esa_wood = cover_arr == C["broadleaf"]
     cover_arr[esa_wood & high] = C["conifer"]
+    # Official woodland and habitat maps, where fetched, override the generic land cover on
+    # natural ground: real forest types (incl. clear-fell and young plantations) from the
+    # National Forest Inventory, then heath and bog from Natural England's habitat inventory.
+    natural = [C[k] for k in ("fields", "park", "broadleaf", "conifer", "heath", "rock", "wetland")]
+    for kind, table in (("phi", PHI_TYPES), ("nfi", NFI_TYPES)):
+        feats = external_features(area_name, kind, table)
+        if not feats:
+            continue
+        overlay = Raster(x0, y1, texel, cw, ch, 255)
+        overlay.hole_fill = 255
+        for g, cls in feats:
+            overlay.polygon(g, C[cls])
+        ov = np.asarray(overlay.img)
+        put = (ov != 255) & np.isin(cover_arr, natural)
+        cover_arr[put] = ov[put]
+        print(f"{kind}: {len(feats)} polygons, {put.mean():.1%} of the area")
     if has_coast:
         # Keep the coastline authoritative over land-use and harbour polygons that spill into the sea.
         spill = sea_mask & ~np.isin(cover_arr, [C["sand"], C["major_road"], C["minor_road"], C["rail"]])
@@ -318,6 +414,8 @@ def main(area_name):
             stats["osm_height"] += row["height"] is not None
         else:
             stats["ml"] += 1
+    lidar = LidarHeights(area_name)
+    stats["lidar"] = 0
     buf = bytearray()
     count = 0
     for g, row in zip(geoms, rows):
@@ -328,7 +426,9 @@ def main(area_name):
         c = g.centroid
         if not (x0 <= c.x <= x1 and y0 <= c.y <= y1):
             continue
-        h = building_height(row, g.area)
+        measured = None if row["height"] is not None and row["height"] > 1 else lidar.height(g)
+        h = measured if measured is not None else building_height(row, g.area)
+        stats["lidar"] += measured is not None
         roof = 0
         ring = g.simplify(0.4)
         rect = g.minimum_rotated_rectangle
@@ -363,6 +463,15 @@ def main(area_name):
         "hasCoast": has_coast, "classes": CLASSES,
         "attribution": "Overture Maps Foundation (incl. © OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles",
     }
+    extra = []
+    if lidar.src is not None:
+        extra.append("Environment Agency LIDAR Composite 2022 (© Environment Agency copyright and/or database right 2022)")
+    if (EXTERNAL / f"{area_name}_nfi.geojson").exists():
+        extra.append("National Forest Inventory © Forestry Commission")
+    if (EXTERNAL / f"{area_name}_phi.geojson").exists():
+        extra.append("Priority Habitats Inventory © Natural England")
+    if extra:
+        meta["attribution"] += "; " + "; ".join(extra) + " (Open Government Licence v3.0)"
     (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     print(json.dumps(meta))
 
