@@ -75,7 +75,7 @@ volume, all from UKV. Ways to bring radar in, simplest first:
    scales with the rain rate), and thin UKV's rain-bearing cloud where radar is dry.
 3. **Move the radar instead of fading it (a nowcast).** Estimate how the rain is moving from the last two or three
    scans (15 minutes apart), or from UKV's 15-minute 10 m wind, and advect the radar field forward for the first
-   hour, blending to UKV as it goes. This is how real rain nowcasts work over the first hour, and it would make rain
+   hour, blending to UKV as it goes. Extrapolating radar like this is the usual basis of first-hour rain nowcasts, and it would make rain
    visibly drift across the map. It's the most work, but it's also where it would look best.
 4. **Precipitation type.** Split radar's rate into rain, snow and hail using UKV's 15-minute `rainfall_rate`,
    `snowfall_rate` and `hail_fall_rate`, if the rain shader ever draws snow or hail differently.
