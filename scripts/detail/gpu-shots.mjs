@@ -25,6 +25,9 @@ const VIEWS = [
 const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--window-size=1600,980'] });
 const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 page.on('pageerror', (e) => console.error('pageerror', e.message));
+page.on('console', (m) => {
+  if (m.type() === 'error' || m.type() === 'warning') console.error(m.type(), m.text().slice(0, 300), m.location().url ?? '');
+});
 await page.goto(url);
 await page.waitForFunction(() => window.detail, null, { timeout: 300000, polling: 500 });
 await page.keyboard.press('h');
