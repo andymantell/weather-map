@@ -265,11 +265,18 @@ void main() {
     shadow = exp(-od);
   }
 
+  // Distance used to reproject this pixel next frame: where the cloud is, else the ground, else far away.
+  float reprojectT = weightSum > 1e-3 ? depthSum / weightSum : min(tScene, 5000.0);
+
   outCloud = vec4(radiance, 1.0 - T);
-  outShadow = vec4(shadow, 0.0, 0.0, 1.0);
+  outShadow = vec4(shadow, reprojectT, 0.0, 1.0);
 }
 `;
 
+// Temporal accumulation with reprojection. Each pixel's history is fetched from where its cloud (or, for the
+// shadow, its ground) was on screen last frame, clipped to the spread of this frame's neighbourhood so stale history
+// cannot ghost far, and blended by the number of frames the pixel has been tracked. Channels of the second target:
+// r shadow, g reprojection distance, b history length.
 export const accumulateFragmentShader = /* glsl */ `
 precision highp float;
 layout(location = 0) out highp vec4 outCloud;
@@ -279,10 +286,113 @@ uniform sampler2D uCloud;
 uniform sampler2D uShadow;
 uniform sampler2D uHistoryCloud;
 uniform sampler2D uHistoryShadow;
-uniform float uBlend;
+uniform sampler2D uDepth;
+uniform mat4 uInvProj;
+uniform mat4 uCamWorld;
+uniform vec3 uCamPos;
+uniform vec3 uCamForward;
+uniform float uFar;
+uniform mat4 uPrevViewProj;
+uniform vec3 uPrevCamPos;
+uniform vec2 uTexel;
+uniform bool uMoving;
+uniform bool uReset;
+uniform float uMaxHistory;
+
+vec2 reproject(vec3 p, out bool valid) {
+  vec4 clip = uPrevViewProj * vec4(p, 1.0);
+  vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+  valid = clip.w > 0.0 && all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+  return uv;
+}
+
+// Catmull-Rom history fetch in five bilinear taps (Jimenez's filmic SMAA approximation), so repeated reprojection
+// does not blur the clouds the way plain bilinear resampling does.
+vec4 sampleSharp(sampler2D tex, vec2 uv) {
+  vec2 size = 1.0 / uTexel;
+  vec2 pos = uv * size;
+  vec2 c = floor(pos - 0.5) + 0.5;
+  vec2 f = pos - c;
+  vec2 w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
+  vec2 w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
+  vec2 w2 = f * (0.5 + f * (2.0 - 1.5 * f));
+  vec2 w3 = f * f * (-0.5 + 0.5 * f);
+  vec2 w12 = w1 + w2;
+  vec2 tc0 = (c - 1.0) * uTexel;
+  vec2 tc3 = (c + 2.0) * uTexel;
+  vec2 tc12 = (c + w2 / w12) * uTexel;
+  vec4 r = texture(tex, vec2(tc12.x, tc0.y)) * (w12.x * w0.y)
+         + texture(tex, vec2(tc0.x, tc12.y)) * (w0.x * w12.y)
+         + texture(tex, tc12) * (w12.x * w12.y)
+         + texture(tex, vec2(tc3.x, tc12.y)) * (w3.x * w12.y)
+         + texture(tex, vec2(tc12.x, tc3.y)) * (w12.x * w3.y);
+  return r / (w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y);
+}
+
 void main() {
-  outCloud = mix(texture(uHistoryCloud, vUv), texture(uCloud, vUv), uBlend);
-  outShadow = mix(texture(uHistoryShadow, vUv), texture(uShadow, vUv), uBlend);
+  vec4 cloud = texture(uCloud, vUv);
+  vec4 shadow = texture(uShadow, vUv);
+  if (uReset) {
+    outCloud = cloud;
+    outShadow = vec4(shadow.rg, 1.0, 1.0);
+    return;
+  }
+
+  vec2 cloudUv = vUv;
+  vec2 shadowUv = vUv;
+  bool cloudValid = true;
+  bool shadowValid = true;
+  if (uMoving) {
+    vec4 view = uInvProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+    vec3 rd = normalize((uCamWorld * vec4(view.xyz / view.w, 0.0)).xyz);
+    vec3 p = uCamPos + rd * shadow.g;
+    cloudUv = reproject(p, cloudValid);
+    // Reject history that was at a very different distance (a cloud edge or hill moved across the pixel).
+    float expected = distance(p, uPrevCamPos);
+    cloudValid = cloudValid && abs(texture(uHistoryShadow, cloudUv).g - expected) < 0.25 * expected + 0.2;
+    float w = pow(uFar + 1.0, texture(uDepth, vUv).r) - 1.0;
+    float tScene = w < 10000.0 ? w / max(dot(rd, uCamForward), 1e-4) : shadow.g;
+    shadowUv = reproject(uCamPos + rd * tScene, shadowValid);
+  }
+
+  vec4 histCloud = uMoving ? sampleSharp(uHistoryCloud, cloudUv) : texture(uHistoryCloud, cloudUv);
+  vec4 histShadow = texture(uHistoryShadow, shadowUv);
+
+  if (uMoving) {
+    // Variance clipping against the 3x3 neighbourhood of this frame's (noisy, single sample) result.
+    vec4 m1 = vec4(0.0);
+    vec4 m2 = vec4(0.0);
+    float s1 = 0.0;
+    float s2 = 0.0;
+    for (int y = -1; y <= 1; y++) {
+      for (int x = -1; x <= 1; x++) {
+        vec2 o = vec2(x, y) * uTexel;
+        vec4 c = texture(uCloud, vUv + o);
+        m1 += c;
+        m2 += c * c;
+        float sh = texture(uShadow, vUv + o).r;
+        s1 += sh;
+        s2 += sh * sh;
+      }
+    }
+    vec4 mean = m1 / 9.0;
+    vec4 sigma = sqrt(max(m2 / 9.0 - mean * mean, 0.0));
+    histCloud = clamp(histCloud, mean - 1.5 * sigma, mean + 1.5 * sigma);
+    float shMean = s1 / 9.0;
+    float shSigma = sqrt(max(s2 / 9.0 - shMean * shMean, 0.0));
+    histShadow.r = clamp(histShadow.r, shMean - 1.5 * shSigma, shMean + 1.5 * shSigma);
+  }
+
+  float n = cloudValid ? min(texture(uHistoryShadow, cloudUv).b + 1.0, uMaxHistory) : 1.0;
+  if (uMoving) {
+    // A camera moving a large fraction of the distance to the cloud (diving through a deck a few km thick) sees
+    // parallax that one depth per pixel cannot reproject, so lean on the current frame instead of smearing.
+    float travel = distance(uCamPos, uPrevCamPos) / max(shadow.g, 0.05);
+    n = min(n, mix(uMaxHistory, 1.0, smoothstep(0.01, 0.08, travel)));
+  }
+  float nShadow = shadowValid ? n : 1.0;
+  outCloud = mix(histCloud, cloud, 1.0 / n);
+  outShadow = vec4(mix(histShadow.r, shadow.r, 1.0 / nShadow), shadow.g, n, 1.0);
 }
 `;
 

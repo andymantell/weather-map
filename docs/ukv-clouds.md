@@ -46,8 +46,23 @@ UKV has no cloud-type field, so the type is implied by these fields rather than 
   term, and energy-conserving integration (Hillaire).
 - Rain below the cloud base uses Shipley's extinction, σ = 0.16 R^0.74 per km, with vertical streak noise. Raining
   cloud is darkened.
-- Each frame adds a jittered sample to a running average. Once 32 frames have been averaged and the camera has not
-  moved, the clouds are no longer marched, so a still view costs nothing extra.
+- Each frame marches one jittered sample per pixel and blends it with the history from earlier frames:
+  - **Still camera:** a running average. Once 32 frames have been averaged, the clouds are no longer marched, so a
+    still view costs nothing extra.
+  - **Moving camera:** temporal reprojection. The cloud pass also writes each pixel's transmittance-weighted mean
+    cloud distance. The accumulate pass turns that into a world position and projects it with last frame's camera to
+    find the history pixel. The cloud shadow on the ground uses the scene depth instead. History is fetched with a
+    5-tap Catmull–Rom filter, because bilinear fetches blur a little more every frame. It is then clipped to the mean
+    ± 1.5σ of this frame's 3 × 3 neighbourhood, which stops stale history ghosting. The result is an exponential blend
+    with weight 1/10 per frame.
+  - **Rejecting history:** history is thrown away where the pixel was off screen last frame, or where the stored
+    distance disagrees with the expected one by more than 25% + 0.2 km (a cloud edge or hill crossed the pixel).
+  - **Fast flights:** the history weight drops to zero as the camera travels from 1% to 8% of the cloud distance in
+    one frame. A dive through a deck a few km thick therefore falls back to the noisy current frame instead of
+    smearing.
+  - **When the clouds change:** `CloudLayer.invalidate()` throws the history away. Changing the cloud height,
+    changing the exaggeration or resizing the window calls it. Animating through UKV timesteps should call it on
+    each step change. For smooth interpolation between steps, the lower-weight moving path would do.
 - The HUD has a "Clouds and rain" toggle, the "Cloud height" and "Cloud opacity" sliders, an "Outline land under
   cloud" switch (coastline plus 200 m contours drawn over the cloud, at full resolution from the scene depth) and the
   valid time.
@@ -81,15 +96,33 @@ be seen yet.
 ## Performance
 
 Measured on the RX 7700S through ANGLE / Direct3D 11, 1600 x 900, clouds at half resolution with 160 steps, vsync on
-(display about 165 Hz). Averages over 5 seconds at the default view.
+(display about 165 Hz). Averages over 5 seconds at the default view unless noted.
 
 | Case | Frame time |
 |---|---|
 | Clouds off | 6.1 ms |
-| Clouds on, camera moving | 29.9 ms (p95 36.3 ms), about 33 fps |
+| Clouds on, camera panning | 31.5 ms (p95 36.5 ms), about 32 fps |
+| Clouds on, camera orbiting | 32.2 ms |
 | Clouds on, camera still (converged) | 6.2 ms |
+| 5 s descent from the default view to 0.5 km above ground | 27.5 ms average: 32.5 ms high up, 33 ms through the deck, 17 ms below it |
 
-An earlier build marched every frame and took about 38 ms whether moving or still.
+Reprojection costs nothing measurable: the same pan took 33.6 ms before it and 33.2 ms after. It does not make
+moving frames cheaper; it makes them cleaner. Each pixel still marches one sample per frame, but it now averages
+about ten frames of history instead of showing a single noisy sample. An earlier build marched every frame and took
+about 38 ms whether moving or still.
+
+**While orbiting** (crop of the default view). Left: no reprojection, each frame a single noisy sample. Middle:
+reprojection with bilinear history, clean but smeared. Right: reprojection with Catmull–Rom history, as shipped.
+
+![Orbiting: no reprojection, bilinear, Catmull–Rom](images/ukv-clouds/reprojection-orbit.png)
+
+How it looks in motion:
+
+- **Panning and orbiting:** the per-pixel grain and dither are gone. Cloud edges are slightly softer than when still,
+  and a little noise remains along cloud edges where history is rejected or clipped. No trails were visible.
+- **Descent:** the dive has no visible ghosting. Frames in and just above the deck match the build without
+  reprojection, because the travel test hands those pixels to the current frame. They are as noisy as before, but
+  not smeared.
 
 ## Known gaps
 
@@ -99,8 +132,10 @@ An earlier build marched every frame and took about 38 ms whether moving or stil
 - **Inside the deck.** With the camera in or just above the cloud, the view is a featureless haze.
 - **Horizon speckle.** In the low view, a thin bright speckled line remains at the horizon.
 - **Far edge.** The domain's far (north) edge is still fairly straight.
-- **Moving cost.** About 30 ms a frame while moving on this GPU. Ideas: lower resolution while moving, temporal
-  reprojection instead of resetting, and an empty-space skip from the volume.
+- **Moving cost.** About 32 ms a frame while moving on this GPU. Reprojection made motion clean but not cheaper.
+  Next ideas: march fewer pixels per frame (checkerboard or 1 in 4, filled from the reprojected history), an
+  empty-space skip from the volume, and fewer steps while moving.
+- **Under the deck.** Below the overcast the ground is almost black, darker than an overcast day should be.
 - **One static hour.** The next step towards the product goal is loading the coming hour from the latest run.
 - **Above 6 km.** The 3D field stops at 6 km, so thunderstorm tops and anvils are not modelled yet (see the research
   note for the heuristics).

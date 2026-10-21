@@ -73,6 +73,8 @@ export async function loadUkvClouds(baseUrl: string): Promise<UkvCloudData> {
 
 /** Frames averaged before a still view counts as converged and the clouds stop being marched. */
 const MAX_FRAMES = 32;
+/** History length while the camera moves: an exponential blend of 1/10 per frame, reprojected. */
+const MOVING_HISTORY = 10;
 
 function nearlyEqual(a: THREE.Matrix4, b: THREE.Matrix4): boolean {
   for (let i = 0; i < 16; i++) {
@@ -102,14 +104,17 @@ export interface CloudLayer {
   /** Draws the coastline and height contours over the clouds. */
   setOutline(on: boolean): void;
   resize(): void;
+  /** Throws away the accumulated history, for when the clouds themselves change (a new timestep). */
+  invalidate(): void;
   /** Frames accumulated since the view last changed. */
   readonly frames: number;
 }
 
 /**
  * Draws UKV clouds and rain as a raymarched volume over the scene. The scene is rendered into an HDR target with
- * depth, the clouds are marched at reduced resolution (and averaged over frames while the view is still), and the
- * composite darkens the scene under cloud shadow before tone mapping.
+ * depth, the clouds are marched at reduced resolution with one jittered sample per pixel per frame, and earlier frames
+ * are reprojected and blended in (a running average while the view is still, a short exponential tail while it
+ * moves). The composite darkens the scene under cloud shadow before tone mapping.
  */
 export function createCloudLayer(
   renderer: THREE.WebGLRenderer,
@@ -184,7 +189,19 @@ export function createCloudLayer(
       uShadow: { value: null },
       uHistoryCloud: { value: null },
       uHistoryShadow: { value: null },
-      uBlend: { value: 1 },
+      uDepth: { value: sceneTarget.depthTexture },
+      // Shared with the cloud pass, which keeps them up to date.
+      uInvProj: cloudMaterial.uniforms.uInvProj,
+      uCamWorld: cloudMaterial.uniforms.uCamWorld,
+      uCamPos: cloudMaterial.uniforms.uCamPos,
+      uCamForward: cloudMaterial.uniforms.uCamForward,
+      uFar: cloudMaterial.uniforms.uFar,
+      uTexel: cloudMaterial.uniforms.uTexel,
+      uPrevViewProj: { value: new THREE.Matrix4() },
+      uPrevCamPos: { value: new THREE.Vector3() },
+      uMoving: { value: false },
+      uReset: { value: true },
+      uMaxHistory: { value: MAX_FRAMES },
     },
     depthTest: false,
     depthWrite: false,
@@ -225,13 +242,16 @@ export function createCloudLayer(
   let cloudScale = 3;
   const lastView = new THREE.Matrix4();
   const lastProjection = new THREE.Matrix4();
+  // The history is garbage until the first frame after a resize or a change to the clouds.
+  let resetHistory = true;
+  const viewProj = new THREE.Matrix4();
 
   const updateTop = () => {
     cloudMaterial.uniforms.uExaggeration.value = exaggeration;
     cloudMaterial.uniforms.uCloudScale.value = cloudScale;
     // Highest ground plus the top of the cirrus sheet.
     cloudMaterial.uniforms.uYTop.value = (hm.maxHeight / 1000) * exaggeration + 10.5 * cloudScale;
-    frames = 0;
+    layer.invalidate();
   };
 
   const layer: CloudLayer = {
@@ -260,7 +280,11 @@ export function createCloudLayer(
       const h = Math.max(1, Math.round(size.y * resolution));
       for (const target of [cloudTarget, history, accumulated]) target.setSize(w, h);
       cloudMaterial.uniforms.uTexel.value.set(1 / w, 1 / h);
+      layer.invalidate();
+    },
+    invalidate() {
       frames = 0;
+      resetHistory = true;
     },
     render() {
       if (!layer.enabled) {
@@ -270,11 +294,9 @@ export function createCloudLayer(
       }
       camera.updateMatrixWorld();
       // MapControls can jitter the camera by one float ULP every frame at its angle limit, so compare loosely.
-      if (!nearlyEqual(camera.matrixWorld, lastView) || !nearlyEqual(camera.projectionMatrix, lastProjection)) {
-        lastView.copy(camera.matrixWorld);
-        lastProjection.copy(camera.projectionMatrix);
-        frames = 0;
-      }
+      const moving =
+        !nearlyEqual(camera.matrixWorld, lastView) || !nearlyEqual(camera.projectionMatrix, lastProjection);
+      if (moving) frames = 0;
 
       renderer.setRenderTarget(sceneTarget);
       renderer.render(scene, camera);
@@ -307,11 +329,20 @@ export function createCloudLayer(
       a.uShadow.value = cloudTarget.textures[1];
       a.uHistoryCloud.value = history.textures[0];
       a.uHistoryShadow.value = history.textures[1];
-      a.uBlend.value = 1 / (frames + 1);
+      a.uMoving.value = moving;
+      a.uReset.value = resetHistory;
+      a.uMaxHistory.value = moving ? MOVING_HISTORY : MAX_FRAMES;
       quad.material = accumulateMaterial;
       renderer.setRenderTarget(accumulated);
       renderer.render(quadScene, quadCamera);
       [history, accumulated] = [accumulated, history];
+      resetHistory = false;
+      // Where this frame was seen from, for reprojecting it next frame.
+      lastView.copy(camera.matrixWorld);
+      lastProjection.copy(camera.projectionMatrix);
+      viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      a.uPrevViewProj.value.copy(viewProj);
+      a.uPrevCamPos.value.copy(u.uCamPos.value);
 
       compositeMaterial.uniforms.uCloud.value = history.textures[0];
       compositeMaterial.uniforms.uShadow.value = history.textures[1];
