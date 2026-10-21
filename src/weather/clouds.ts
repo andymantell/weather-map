@@ -164,6 +164,7 @@ export function createCloudLayer(
       uCloudScale: { value: 2 },
       uDensity: { value: 20 },
       uYTop: { value: 0 },
+      uRainShafts: { value: 0 },
       uSunDir: { value: sunDirection },
       uSunRadiance: { value: new THREE.Color(1, 0.95, 0.88).multiplyScalar(30) },
       uAmbientTop: { value: new THREE.Color(0.48, 0.57, 0.72) },

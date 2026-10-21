@@ -48,6 +48,7 @@ uniform float uExaggeration;
 uniform float uCloudScale;
 uniform float uDensity;
 uniform float uYTop;
+uniform float uRainShafts;  // 1 draws the old Shipley rain shafts; 0 leaves rain to src/weather/rain
 
 uniform vec3 uSunDir;
 uniform vec3 uSunRadiance;
@@ -121,7 +122,7 @@ Sample sampleAt(vec3 p, bool cheap, float lod) {
   float rain = 64.0 * f2.r * f2.r;
   // Convective columns (high CAPE) billow; layered cloud is flatter and smoother.
   float convective = smoothstep(0.15, 0.6, f2.a);
-  if (rain > 0.1 && h < base) {
+  if (uRainShafts > 0.0 && rain > 0.1 && h < base) {
     // Rain falls only from where the noise left cloud at the base, so shafts hang under clouds instead of
     // filling the whole 2 km grid cell as a smooth column. A 0.6 coverage floor keeps light drizzle patches.
     float hb = min(base + 0.15, uVolumeTop - 0.01);
