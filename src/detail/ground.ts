@@ -119,6 +119,8 @@ varying vec2 vLocal;
 varying float vHeight;
 /** Surface relief (m) for bump shading, set by surfaceColour. */
 float surfBump;
+/** 1 on lakes, rivers and harbour basins, which reflect the sky (see WATER). */
+float surfWater;
 
 int coverClass(vec2 p) {
   // Beyond the detailed tile (the 1 km surroundings) land is all field patchwork.
@@ -136,13 +138,14 @@ vec3 surfaceColour(vec2 p, out float rough) {
   float bumpFade = 1.0 - smoothstep(1.0, 6.0, length(fwidth(p)));
   float relief = fbm(p / 1.3) * 0.25 + vnoise(p / 0.4) * 0.05;
   surfBump = relief * bumpFade;
+  surfWater = 0.0;
   if (k == 1) {
     return patchwork(p, fieldSize, rough);
   }
   if (k == 2) return mix(vec3(0.27, 0.40, 0.15), vec3(0.34, 0.46, 0.20), n) * (0.95 + 0.05 * sin(p.x * 0.4)) * (0.9 + 0.2 * fine);
   if (k == 3 || k == 4) surfBump = (fbm(p / 3.0) * 0.8 + vnoise(p / 0.8) * 0.15) * bumpFade;
   if (k == 6) surfBump = (fbm(p / 2.0) * 1.2) * bumpFade;
-  if (k >= 9 && k != 14) surfBump = 0.0;
+  if (k >= 10 && k != 14) surfBump = 0.0;
   if (k == 3) return mix(vec3(0.12, 0.21, 0.07), vec3(0.22, 0.32, 0.11), n * 0.7 + fine * 0.3);
   if (k == 4) return mix(vec3(0.08, 0.15, 0.08), vec3(0.15, 0.24, 0.12), n * 0.7 + fine * 0.3);
   if (k == 5) {
@@ -152,7 +155,14 @@ vec3 surfaceColour(vec2 p, out float rough) {
   if (k == 6) return vec3(0.45, 0.44, 0.42) * (0.7 + 0.5 * n);
   if (k == 7) return vec3(0.76, 0.69, 0.52) * (0.9 + 0.15 * n);
   if (k == 8) return mix(vec3(0.27, 0.30, 0.17), vec3(0.15, 0.22, 0.20), fine);
-  if (k == 9) { rough = 0.12; return vec3(0.10, 0.16, 0.19); }
+  if (k == 9) {
+    // Inland water sits at its own level above the sea plane, so it is shaded here: dark
+    // water with wind ripples, lit mostly by the sky it reflects.
+    rough = 0.08;
+    surfWater = 1.0;
+    surfBump = (vnoise(p / 1.5) * 0.04 + vnoise(p / 6.0 + 3.0) * 0.08) * bumpFade;
+    return vec3(0.06, 0.10, 0.11);
+  }
   if (k == 10) {
     // Housing: pavement and roofs-in-between greys speckled with gardens and trees.
     vec3 hard = vec3(0.47, 0.45, 0.42) * (0.85 + 0.3 * fine);
@@ -174,6 +184,23 @@ vec3 surfaceColour(vec2 p, out float rough) {
  * Bump shading from surfBump (metres) by screen-space derivatives, as in Mikkelsen (2010),
  * "Bump Mapping Unparametrized Surfaces on the GPU". Tile meshes are in metres scaled to km.
  */
+/**
+ * Sky reflection on inland water: the material has no environment map, so a gradient sky
+ * (horizon to zenith, linear, roughly matching the Sky shader after tone mapping) is added
+ * by Schlick's Fresnel. Runs after the normal is final.
+ */
+const WATER = /* glsl */ `
+if (surfWater > 0.0) {
+  vec3 v = normalize(vViewPosition);
+  vec3 up = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
+  vec3 r = reflect(-v, normal);
+  float cosV = clamp(dot(normal, v), 0.0, 1.0);
+  float fresnel = 0.02 + 0.98 * pow(1.0 - cosV, 5.0);
+  vec3 sky = mix(vec3(1.05, 1.15, 1.3), vec3(0.35, 0.6, 1.0), smoothstep(0.0, 0.6, dot(r, up)));
+  totalEmissiveRadiance += surfWater * fresnel * sky;
+}
+`;
+
 const BUMP = /* glsl */ `
 {
   vec3 pos = -vViewPosition;
@@ -256,7 +283,8 @@ export function createGround(area: Area): Ground {
         '#include <color_fragment>\nfloat surfRough;\ndiffuseColor.rgb = pow(surfaceColour(vLocal, surfRough), vec3(2.2));',
       )
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = surfRough;')
-      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${BUMP}`);
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${BUMP}`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${WATER}`);
   };
   const mesh = new THREE.Mesh(geometry, material);
   mesh.receiveShadow = true;
