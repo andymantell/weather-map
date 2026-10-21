@@ -170,7 +170,7 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
     // Larger, calmer patches now that roads are drawn on top.
     vec3 hard = vec3(0.50, 0.48, 0.45) * (0.92 + 0.12 * fine);
     vec3 garden = mix(vec3(0.24, 0.36, 0.13), vec3(0.17, 0.28, 0.10), vnoise(p / 4.0));
-    return mix(hard, garden, smoothstep(0.45, 0.56, fbm(p / 14.0)));
+    return mix(hard, garden, smoothstep(0.42, 0.58, fbm(p / 8.0)));
   }
   if (k == 11) return vec3(0.42, 0.42, 0.43) * (0.85 + 0.25 * n);
   if (k == 12) { rough = 0.8; return vec3(0.33, 0.33, 0.34) * (0.9 + 0.2 * fine); }

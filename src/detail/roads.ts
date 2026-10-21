@@ -82,6 +82,21 @@ void roadSurface(inout vec3 colour, inout float rough) {
 }
 `;
 
+/** Points at most STEP m apart, so chords stay close to the ground between them. */
+const STEP = 2;
+function densify(pts: Float32Array): Float32Array {
+  const out: number[] = [pts[0], pts[1]];
+  for (let i = 1; i < pts.length / 2; i++) {
+    const x0 = pts[i * 2 - 2];
+    const z0 = pts[i * 2 - 1];
+    const x1 = pts[i * 2];
+    const z1 = pts[i * 2 + 1];
+    const k = Math.max(Math.ceil(Math.hypot(x1 - x0, z1 - z0) / STEP), 1);
+    for (let j = 1; j <= k; j++) out.push(x0 + ((x1 - x0) * j) / k, z0 + ((z1 - z0) * j) / k);
+  }
+  return new Float32Array(out);
+}
+
 export function createRoads(area: Area, buffer: ArrayBuffer, uniforms: ScaledUniforms): THREE.Mesh {
   const view = new DataView(buffer);
   const pos: number[] = [];
@@ -91,15 +106,19 @@ export function createRoads(area: Area, buffer: ArrayBuffer, uniforms: ScaledUni
   const index: number[] = [];
   let o = 0;
   while (o < buffer.byteLength) {
-    const n = view.getUint16(o, true);
+    const n0 = view.getUint16(o, true);
     const cls = view.getUint8(o + 2);
     const flags = view.getUint8(o + 3);
     const width = view.getFloat32(o + 4, true);
-    const pts = new Float32Array(buffer.slice(o + 8, o + 8 + n * 8));
-    o += 8 + n * 8;
+    const raw = new Float32Array(buffer.slice(o + 8, o + 8 + n0 * 8));
+    o += 8 + n0 * 8;
+    const pts = densify(raw);
+    const n = pts.length / 2;
     const bridge = (flags & 1) !== 0;
     // Wider roads sit a little higher, so they draw over narrower ones where they cross.
-    const lift = 0.12 + 0.015 * (8 - cls);
+    // The lift scales with the terrain (see the vertex shader), because a ribbon's chords
+    // across the ground mesh's creases dip by up to ~0.1 m per unit of exaggeration.
+    const lift = 0.25 + 0.02 * (8 - cls);
     let length = 0;
     for (let i = 1; i < n; i++) length += Math.hypot(pts[i * 2] - pts[i * 2 - 2], pts[i * 2 + 1] - pts[i * 2 - 1]);
     const h0 = meshHeight(area, pts[0], pts[1]);
@@ -154,7 +173,7 @@ export function createRoads(area: Area, buffer: ArrayBuffer, uniforms: ScaledUni
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(0.0, 1.0, 0.0);')
       .replace(
         '#include <begin_vertex>',
-        '#include <begin_vertex>\nvRoad = aRoad;\nvInfo = aInfo;\nvRoadPos = position.xz;\ntransformed.y = aBase * terrainScale + transformed.y;',
+        '#include <begin_vertex>\nvRoad = aRoad;\nvInfo = aInfo;\nvRoadPos = position.xz;\ntransformed.y = (aBase + transformed.y) * terrainScale;',
       );
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>\n${ROAD}`)
