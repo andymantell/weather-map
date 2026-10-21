@@ -17,7 +17,9 @@ Make the whole thing static. The browser fetches Met Office NetCDF straight from
 AWS buckets and decodes it itself, so there is **no scheduled server job at all**. The app and
 the ~10 GB of terrain tiles sit in one private S3 bucket in London behind one CloudFront
 distribution on CloudFront's **flat-rate Free plan** ($0/month, no overage charges). The only
-expected charge is a few cents a month of S3 storage above the plan's included 5 GB. If the map
+expected charge is a few cents a month of S3 storage above the plan's included 5 GB. The app
+itself could equally go on GitHub Pages for free, with only the tiles on CloudFront (see
+[GitHub Pages for the app](#github-pages-for-the-app)). If the map
 ever gets popular, move to the flat-rate Pro plan at $15/month, which still can't run away. A
 Lambda job that pre-bakes the weather textures is kept as a fallback, and it would also sit
 inside the free tier.
@@ -192,8 +194,31 @@ Andy said he's open to other ideas. The one worth knowing about:
   well and $15/month feels like too much, this is the move. Otherwise AWS flat-rate Free is
   simpler and also $0.
 
-GitHub Pages could host the app shell again now that no server job is needed, but not the 10 GB
-of tiles, so it doesn't remove the need for object storage.
+## GitHub Pages for the app
+
+Now that no server job is needed, GitHub Pages can host the app itself for free. It can't hold
+the terrain tiles, though
+([GitHub Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits),
+[large files on GitHub](https://docs.github.com/en/repositories/working-with-files/managing-large-files/about-large-files-on-github)):
+
+- Published sites may be no larger than 1 GB, and source repositories have a recommended limit
+  of 1 GB. GitHub "strongly recommends" repositories stay under 5 GB, and blocks single files
+  over 100 MiB. The bake is estimated at about 10 GB.
+- Bandwidth has a soft limit of 100 GB a month, the same as CloudFront's Free plan, and
+  "rate limits may apply" (HTTP 429).
+
+Splitting the tiles across ten or more repositories would get round the size limit, but it's a
+hack against the spirit of the limits, and every rebake would mean huge git pushes.
+
+So the cheapest split is:
+
+- **App on GitHub Pages** (free, deploys from `main` with a GitHub Actions workflow).
+- **Tiles on object storage** with CORS allowing the Pages origin: S3 behind CloudFront's
+  flat-rate Free plan (about $0.12 a month), or Cloudflare R2 (free up to 10 GB, no egress
+  charges, but needs a domain on Cloudflare).
+
+Keeping the app on CloudFront too is only worth it for a single domain and a single place to
+deploy. Pages is the simpler free option for the app.
 
 ## A Godot desktop app instead?
 
