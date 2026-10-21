@@ -16,7 +16,7 @@ Usage: python scripts/detail/fetch_external.py plymouth [--skip-lidar]
 """
 
 import json
-import pathlib
+import re
 import sys
 import time
 import urllib.parse
@@ -32,13 +32,15 @@ import build_area as ba
 
 OUT = ba.CACHE / "external"
 
-# OGC WCS 2.0.1 coverages from the data.gov.uk records for the 2022 LIDAR Composite.
+# OGC WCS 2.0.1 services from the data.gov.uk records for the LIDAR Composite. Each also
+# serves a hillshade coverage, so the elevation one is picked by name.
 DSM_WCS = "https://environment.data.gov.uk/spatialdata/lidar-composite-digital-surface-model-first-return-dsm-1m/wcs"
 DTM_WCS = "https://environment.data.gov.uk/spatialdata/lidar-composite-digital-terrain-model-dtm-1m/wcs"
-# ArcGIS feature services. NFI_URL may need updating: find the current layer from the
-# Forestry Commission open data portal (dataset "National Forest Inventory GB 2024").
-NFI_URL = None
-PHI_URL = "https://services.arcgis.com/JJzESW51TqeY9uat/ArcGIS/rest/services/Priority_Habitats_Inventory_England/FeatureServer/0"
+# Forestry Commission ArcGIS feature layer (latest year listed on data-forestry.opendata.arcgis.com).
+NFI_URL = "https://services2.arcgis.com/mHXjwgl3OARRqqD4/arcgis/rest/services/National_Forest_Inventory_GB_2025/FeatureServer/0"
+# Natural England's ArcGIS service for the PHI now needs a token; Defra's GeoServer WFS is open.
+PHI_WFS = "https://environment.data.gov.uk/spatialdata/priority-habitat-inventory-england/wfs"
+PHI_TYPE = "dataset-92b43165-0dd0-4e69-a712-1e49bb5aa0d0:Priority_Habitat_Inventory_England"
 
 CHUNK = 2000  # metres per WCS request
 
@@ -66,8 +68,8 @@ def bng_bbox(bbox):
 
 def coverage_id(wcs):
     caps = get(wcs, {"service": "WCS", "version": "2.0.1", "request": "GetCapabilities"}).decode()
-    start = caps.index("<wcs:CoverageId>") + len("<wcs:CoverageId>")
-    return caps[start:caps.index("</wcs:CoverageId>", start)]
+    ids = re.findall(r"<wcs:CoverageId>([^<]+)</wcs:CoverageId>", caps)
+    return next(i for i in ids if "Elevation" in i)
 
 
 def wcs_chunk(wcs, cov, x0, y0, x1, y1):
@@ -136,15 +138,31 @@ def fetch_features(url, bbox, out):
     print("wrote", out)
 
 
+def fetch_wfs(url, type_name, bbox, out):
+    if out.exists():
+        print("have", out)
+        return
+    # WFS 1.0.0 keeps EPSG:4326 in lon/lat order; the server's default count (300000) means
+    # one request covers an area.
+    page = json.loads(get(url, {
+        "service": "WFS", "version": "1.0.0", "request": "GetFeature", "typeName": type_name,
+        "outputFormat": "application/json", "srsName": "EPSG:4326",
+        "bbox": ",".join(map(str, bbox)) + ",EPSG:4326",
+    }))
+    features = page["features"]
+    for f in features:
+        f.pop("id", None)
+    OUT.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    print(f"wrote {out} ({len(features)} features)")
+
+
 def main(area, skip_lidar=False):
     bbox = ba.AREAS[area]["bbox"]
     if not skip_lidar:
         fetch_lidar(area, bbox)
-    if NFI_URL:
-        fetch_features(NFI_URL, bbox, OUT / f"{area}_nfi.geojson")
-    else:
-        print("NFI_URL not set: find the National Forest Inventory GB 2024 feature layer and set it")
-    fetch_features(PHI_URL, bbox, OUT / f"{area}_phi.geojson")
+    fetch_features(NFI_URL, bbox, OUT / f"{area}_nfi.geojson")
+    fetch_wfs(PHI_WFS, PHI_TYPE, bbox, OUT / f"{area}_phi.geojson")
 
 
 if __name__ == "__main__":
