@@ -66,6 +66,12 @@ UKV has no cloud-type field, so the type is implied by these fields rather than 
   - **Fast flights:** the history weight drops to zero as the camera travels from 1% to 8% of the cloud distance in
     one frame. A dive through a deck a few km thick therefore falls back to the noisy current frame instead of
     smearing.
+  - **Fresh pixels:** pixels with little history (the first frames after a reset, disocclusions, fast travel) take
+    the 3 × 3 mean of this frame instead of their own single sample. The weight is `clamp(1.5/n − 0.15, 0, 1)`, which
+    is zero by about 10 frames of history. On the RX 7700S this removes the dot-grid sparkle of the first 1–3 frames
+    after a reset without blotches: the first frame is 25% closer to the converged image. The converged image is
+    unchanged (mean difference 0.13/255), and pan, orbit and settle-after-stopping are identical because history
+    there is already about 10 frames. Moving frame time is unchanged (about 24 ms pan and orbit, 7.7 ms still).
   - **When the clouds change:** `CloudLayer.invalidate()` throws the history away. Changing the cloud height,
     changing the exaggeration or resizing the window calls it. Animating through UKV timesteps should call it on
     each step change. For smooth interpolation between steps, the lower-weight moving path would do.
