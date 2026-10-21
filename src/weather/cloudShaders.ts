@@ -291,9 +291,11 @@ uniform sampler2D uScene;
 uniform sampler2D uCloud;
 uniform sampler2D uShadow;
 uniform float uShadowStrength;
+uniform float uOpacity;
 varying vec2 vUv;
 void main() {
-  vec4 cloud = texture2D(uCloud, vUv);
+  // Premultiplied, so scaling the whole vec4 fades the cloud evenly.
+  vec4 cloud = texture2D(uCloud, vUv) * uOpacity;
   float shadow = texture2D(uShadow, vUv).r;
   // Shadow removes most of the direct sun; skylight still reaches the ground.
   vec3 scene = texture2D(uScene, vUv).rgb * mix(1.0, shadow, uShadowStrength);

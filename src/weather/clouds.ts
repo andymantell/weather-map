@@ -97,6 +97,8 @@ export interface CloudLayer {
   render(): void;
   setExaggeration(value: number): void;
   setCloudScale(value: number): void;
+  /** Fades the clouds and rain over the scene, 0 to 1. */
+  setOpacity(value: number): void;
   resize(): void;
   /** Frames accumulated since the view last changed. */
   readonly frames: number;
@@ -192,6 +194,7 @@ export function createCloudLayer(
       uCloud: { value: null },
       uShadow: { value: null },
       uShadowStrength: { value: 0.75 },
+      uOpacity: { value: 0.75 },
     },
     depthTest: false,
     depthWrite: false,
@@ -229,6 +232,9 @@ export function createCloudLayer(
     setCloudScale(value) {
       cloudScale = value;
       updateTop();
+    },
+    setOpacity(value) {
+      compositeMaterial.uniforms.uOpacity.value = value;
     },
     resize() {
       renderer.getDrawingBufferSize(size);
@@ -303,19 +309,24 @@ export function createCloudLayer(
   return layer;
 }
 
-/** Adds the cloud switch, cloud height slider and source line to the HUD. */
+/** Adds the cloud switch, cloud height and opacity sliders and source line to the HUD. */
 export function mountCloudControls(hud: HTMLElement, layer: CloudLayer, meta: UkvCloudMeta): void {
   const box = document.createElement('div');
   box.innerHTML = `
     <label><input type="checkbox" checked /> Clouds and rain</label>
     <label>Cloud height <input type="range" min="1" max="6" step="0.5" value="3" /> <output>3×</output></label>
+    <label>Cloud opacity <input type="range" min="0.25" max="1" step="0.05" value="0.75" /> <output>0.75</output></label>
     <p class="hint"></p>`;
-  const [toggle, scale] = Array.from(box.querySelectorAll('input'));
-  const output = box.querySelector('output')!;
+  const [toggle, scale, opacity] = Array.from(box.querySelectorAll('input'));
+  const [output, opacityOutput] = Array.from(box.querySelectorAll('output'));
   toggle.addEventListener('change', () => (layer.enabled = toggle.checked));
   scale.addEventListener('input', () => {
     layer.setCloudScale(Number(scale.value));
     output.textContent = `${scale.value}×`;
+  });
+  opacity.addEventListener('input', () => {
+    layer.setOpacity(Number(opacity.value));
+    opacityOutput.textContent = opacity.value;
   });
   const valid = new Date(meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
   box.querySelector('p')!.textContent = `UKV cloud and rain, valid ${valid} UTC (fixed hour for now).`;

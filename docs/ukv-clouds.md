@@ -40,14 +40,15 @@ UKV has no cloud-type field, so the type is implied by these fields rather than 
 - Cloud fraction from the volume sets the coverage. Perlin–Worley shape noise and Worley detail noise from the cloud
   lab carve it into billows, so a 2 km grid cell does not look like a block. Detail fades out with distance.
 - Clouds sit above the terrain (heights are AGL). The vertical scale follows the map's terrain exaggeration, and the
-  "Cloud height" slider scales the cloud layer on its own (default 3).
+  "Cloud height" slider scales the cloud layer on its own (default 3). "Cloud opacity" fades the clouds over the map
+  (default 0.75).
 - Lighting: sun march for self-shadowing, two-lobe Henyey–Greenstein phase, multiple-scattering octaves, powder
   term, and energy-conserving integration (Hillaire).
 - Rain below the cloud base uses Shipley's extinction, σ = 0.16 R^0.74 per km, with vertical streak noise. Raining
   cloud is darkened.
 - Each frame adds a jittered sample to a running average. Once 32 frames have been averaged and the camera has not
   moved, the clouds are no longer marched, so a still view costs nothing extra.
-- The HUD has a "Clouds and rain" toggle, the "Cloud height" slider and the valid time.
+- The HUD has a "Clouds and rain" toggle, the "Cloud height" and "Cloud opacity" sliders and the valid time.
 
 ## Screenshots
 
