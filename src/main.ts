@@ -4,6 +4,7 @@ import { Sky } from 'three/addons/objects/Sky.js';
 import { loadHeightmap } from './heightmap';
 import { Projection } from './projection';
 import { createRainPlane, loadRainField } from './rain';
+import { createOcean, mountSeaControls } from './sea/ocean';
 import { createSea, createTerrain } from './terrain';
 import './style.css';
 
@@ -69,7 +70,11 @@ async function init() {
 
   const terrain = createTerrain(heightmap);
   scene.add(terrain);
-  scene.add(createSea(heightmap));
+  const flatSea = createSea(heightmap);
+  scene.add(flatSea);
+  const ocean = await createOcean(renderer, heightmap, sky, import.meta.env.BASE_URL);
+  scene.add(ocean.mesh);
+  mountSeaControls(document.getElementById('hud')!, ocean, flatSea);
 
   const rain = createRainPlane(rainField, heightmap.meta);
   scene.add(rain);
@@ -93,6 +98,8 @@ async function init() {
   controls.update();
 
   loading.remove();
+  // Handles for driving the view from the console or screenshot scripts.
+  if (import.meta.env.DEV) Object.assign(window, { camera, controls, scene });
 }
 
 window.addEventListener('resize', () => {

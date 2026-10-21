@@ -1,0 +1,61 @@
+{
+  "title": "Wave Model Forecast on UK 1.5km Wave Standard Grid",
+  "source": "Met Office Operational Suite, WAVEWATCH III",
+  "forecast_reference_time": "2026-10-21T06:00:00Z",
+  "valid_time": "2026-10-21T12:00:00Z",
+  "grid": {
+    "proj4": "+proj=laea +lat_0=54.9 +lon_0=-2.5 +x_0=0 +y_0=0 +ellps=GRS80 +units=m",
+    "width": 540,
+    "height": 680,
+    "x_west_edge": -640000,
+    "y_north_edge": 720000,
+    "spacing": 2000,
+    "note": "cell centres half a cell in from the edges; row 0 north, column 0 west"
+  },
+  "textures": {
+    "windsea": {
+      "file": "nws-waves-windsea.png",
+      "r": "wind-sea significant height, m = byte * 0.05",
+      "gb": "propagation direction (x east, y north) = byte / 127.5 - 1"
+    },
+    "swell": {
+      "file": "nws-waves-swell.png",
+      "r": "primary swell significant height, m = byte * 0.05",
+      "gb": "propagation direction (x east, y north) = byte / 127.5 - 1"
+    },
+    "period": {
+      "file": "nws-waves-period.png",
+      "r": "wind-sea peak period, s = byte * 0.1",
+      "g": "primary swell peak period, s = byte * 0.1",
+      "b": "10 m wind speed, m/s = byte * 0.2"
+    }
+  },
+  "scale": {
+    "hs": 0.05,
+    "tp": 0.1,
+    "wind": 0.2
+  },
+  "stats": {
+    "VHM0_WW": [
+      0.0,
+      5.02
+    ],
+    "VHM0_SW1": [
+      0.0,
+      3.92
+    ],
+    "VTPK_WW": [
+      0.0,
+      12.35
+    ],
+    "VTPK_SW1": [
+      0.0,
+      16.52
+    ],
+    "WSPD": [
+      0.0,
+      21.39
+    ]
+  },
+  "attribution": "Contains Met Office data, Crown copyright, licensed under CC BY-SA 4.0"
+}
