@@ -67,6 +67,29 @@ Open points, not yet prototyped:
 Sources: [AWS registry entry for UKV](https://registry.opendata.aws/met-office-uk-deterministic/),
 [sea-state-research.md](sea-state-research.md), [ukv-data-access.md](ukv-data-access.md).
 
+### Load on the Met Office bucket
+
+Checked on 21 October 2026, looking for any fair-use rule for the open-data buckets:
+
+- The [AWS registry entry](https://registry.opendata.aws/met-office-uk-deterministic/) says the
+  data is "offered on a free, unsupported basis", licensed CC BY-SA 4.0, and gives a contact
+  (servicedesk@metoffice.gov.uk). It mentions no fair-use policy or rate limits.
+- The Met Office's [fair usage policy](https://www.metoffice.gov.uk/policies/fair-usage) covers
+  only its DataPoint service (5,000 requests a day free), not the AWS buckets.
+- The Met Office's [data channels page](https://www.metoffice.gov.uk/services/data/external-data-channels)
+  calls the AWS datasets a "public BETA", "available for free in the AWS Cloud", under AWS's
+  sustainability data initiative.
+- AWS's [Open Data Sponsorship Program](https://aws.amazon.com/opendata/open-data-sponsorship-program/)
+  says it "covers the cost of storing and sharing" sponsored datasets. I found no page that says
+  outright who pays egress for this particular bucket, so I don't know that for certain.
+
+Nothing forbids browser reads, and the CORS settings suggest they're expected. But every visitor
+fetching 12 to 25 MB straight from a free beta service scales with our traffic: 1,000 visits is
+about 20 GB a month, and 100,000 visits would be about 2 TB. Mirroring with the Lambda fallback
+below caps it at one download per hour, about 25 MB an hour or 18 GB a month, whatever our
+traffic. The plan is to read directly while traffic is small, and switch to the mirror if the map
+gets real use or the Met Office asks. Emailing the service desk to check is cheap.
+
 ## Architecture
 
 ```
