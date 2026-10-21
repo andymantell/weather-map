@@ -25,6 +25,14 @@ Met Office website's mm/h key (<0.5 `#0000fe`, 0.5–1 `#3265fe`, 1–2 `#0cbcfe
 8–16 `#fe9800`, 16–32 `#fe0000`, >32 `#b30000`), sampled from a screenshot of the site. The field is in m s-1, so
 multiply by 3.6 × 10⁶ for mm/h.
 
+![Rain plane over the British Isles, looking north](images/ukv-alignment-rain-overview.jpg)
+
+*Looking north over the British Isles at 4× vertical exaggeration.*
+
+![Rain plane over Devon and Cornwall, top-down](images/ukv-alignment-rain-southwest-top.jpg)
+
+*Top-down over Devon and Cornwall. Each square is one 2 km UKV cell. Cells under 0.1 mm/h are left transparent.*
+
 ## Numerical check
 
 I compared the UKV `landsea_mask` (same run, T+3) with the terrain's land cells (height > 0), over the terrain's
