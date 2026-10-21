@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Area } from './area';
+import { type Area, heightAt } from './area';
 
 /**
  * Buildings for a PoC area, in two representations:
@@ -10,7 +10,10 @@ import type { Area } from './area';
  *   built-up fraction and mean height. This is the form that could be baked for
  *   the whole UK and read from far away.
  *
- * Both take a vertical scale, so a town can be drawn taller than life.
+ * - masses: footprints merged into street blocks by scripts/poc_terrain/build_masses.py,
+ *   so a town keeps its real shape and street pattern with far fewer polygons.
+ *
+ * All take a vertical scale, so a town can be drawn taller than life.
  */
 
 export interface Building {
@@ -74,7 +77,8 @@ class Builder {
       this.pos.push(p[0], p[1], p[2]);
       this.nor.push(n.x, n.y, n.z);
       this.col.push(colour.r, colour.g, colour.b);
-      this.base.push(base);
+      // A fourth coordinate overrides the base height for that vertex.
+      this.base.push(p.length > 3 ? p[3] : base);
     }
   }
 
@@ -280,6 +284,93 @@ export function createBlocks(
       normal.set(0, 1, 0);
       const roof = ROOFS[Math.floor(hash(k, i) * ROOFS.length)];
       b.quad([x0, h, z0], [x0 + side, h, z0], [x0 + side, h, z0 + side], [x0, h, z0 + side], normal, roof, baseMin[c]);
+    }
+  }
+  const mesh = new THREE.Mesh(
+    b.geometry(),
+    scaledMaterial(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), uniforms),
+  );
+  mesh.customDepthMaterial = scaledMaterial(
+    new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking }),
+    uniforms,
+  ) as THREE.MeshDepthMaterial;
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+export interface Mass {
+  /** Outer ring first, then holes, in local scene metres (x east, z south). */
+  rings: Float32Array[];
+  height: number;
+}
+
+export function parseMasses(buffer: ArrayBuffer): Mass[] {
+  const view = new DataView(buffer);
+  const out: Mass[] = [];
+  let o = 0;
+  while (o < view.byteLength) {
+    const count = view.getUint16(o, true);
+    const height = view.getFloat32(o + 4, true);
+    o += 8;
+    const rings: Float32Array[] = [];
+    for (let r = 0; r < count; r++) {
+      const n = view.getUint16(o, true);
+      o += 4;
+      const ring = new Float32Array(n * 2);
+      for (let i = 0; i < n; i++) {
+        ring[i * 2] = view.getFloat32(o, true);
+        ring[i * 2 + 1] = -view.getFloat32(o + 4, true);
+        o += 8;
+      }
+      rings.push(ring);
+    }
+    out.push({ rings, height });
+  }
+  return out;
+}
+
+/**
+ * Extrudes merged masses. Unlike single buildings a mass can run a long way up a
+ * hill, so every wall and roof vertex sits on the terrain beneath it rather than on
+ * one base height.
+ */
+export function createMasses(masses: Mass[], area: Area, uniforms: ScaledUniforms): THREE.Mesh {
+  const b = new Builder();
+  const normal = new THREE.Vector3();
+  for (const mass of masses) {
+    const h = mass.height;
+    const r = hash(mass.rings[0][0], mass.rings[0][1]);
+    const wall = WALLS[Math.floor(r * WALLS.length)].clone().lerp(BIG_WALL, h > 12 ? 0.6 : 0.25);
+    const roof = ROOFS[Math.floor(hash(mass.rings[0][1], mass.rings[0][0]) * ROOFS.length)];
+    for (const ring of mass.rings) {
+      const n = ring.length / 2;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        const ax = ring[i * 2];
+        const az = ring[i * 2 + 1];
+        const bx = ring[j * 2];
+        const bz = ring[j * 2 + 1];
+        const ga = heightAt(area, ax, az);
+        const gb = heightAt(area, bx, bz);
+        // Outer rings are counter-clockwise on the map and holes clockwise, so this faces out of the solid.
+        normal.set(-(bz - az), 0, bx - ax).normalize();
+        b.quad([ax, -SINK, az, ga], [bx, -SINK, bz, gb], [bx, h, bz, gb], [ax, h, az, ga], normal, wall, 0);
+      }
+    }
+    const toVec = (ring: Float32Array) => {
+      const v: THREE.Vector2[] = [];
+      for (let i = 0; i < ring.length; i += 2) v.push(new THREE.Vector2(ring[i], ring[i + 1]));
+      return v;
+    };
+    const contour = toVec(mass.rings[0]);
+    const holes = mass.rings.slice(1).map(toVec);
+    const all = contour.concat(...holes);
+    normal.set(0, 1, 0);
+    for (const [i, j, k] of THREE.ShapeUtils.triangulateShape(contour, holes)) {
+      const p = (v: THREE.Vector2) => [v.x, h, v.y, heightAt(area, v.x, v.y)];
+      b.tri(p(all[i]), p(all[j]), p(all[k]), normal, roof, 0);
     }
   }
   const mesh = new THREE.Mesh(

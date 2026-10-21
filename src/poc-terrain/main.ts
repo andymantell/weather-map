@@ -8,7 +8,7 @@ import { N8AOPass } from 'n8ao';
 import { loadHeightmap } from '../heightmap';
 import { Projection } from '../projection';
 import { type Area, heightAt, loadArea } from './area';
-import { type Building, createBlocks, createFootprints, parseBuildings } from './buildings';
+import { type Building, createBlocks, createFootprints, createMasses, parseBuildings, parseMasses } from './buildings';
 import { createGround } from './ground';
 import { createSurroundings } from './surroundings';
 import { createTrees } from './trees';
@@ -178,11 +178,22 @@ function disposeLayer(o: THREE.Object3D | null) {
   });
 }
 
-function rebuildBuildings() {
+let buildingRequest = 0;
+
+async function rebuildBuildings() {
+  const request = ++buildingRequest;
+  let layer: THREE.Object3D | null = null;
+  if (state.buildings === 'footprints') layer = createFootprints(buildings, uniforms);
+  else if (state.buildings === 'blocks') layer = createBlocks(buildings, area, state.cell, uniforms);
+  else if (state.buildings.startsWith('masses-')) {
+    const url = `${import.meta.env.BASE_URL}poc-terrain/${area.name}/${state.buildings}.bin`;
+    const buffer = await fetch(url).then((r) => r.arrayBuffer());
+    // A later change of mode wins if this one was still loading.
+    if (request !== buildingRequest) return;
+    layer = createMasses(parseMasses(buffer), area, uniforms);
+  }
   disposeLayer(buildingLayer);
-  buildingLayer = null;
-  if (state.buildings === 'footprints') buildingLayer = createFootprints(buildings, uniforms);
-  else if (state.buildings === 'blocks') buildingLayer = createBlocks(buildings, area, state.cell, uniforms);
+  buildingLayer = layer;
   if (buildingLayer) scene.add(buildingLayer);
 }
 
@@ -330,7 +341,7 @@ async function init() {
     scene.add(water);
   }
 
-  rebuildBuildings();
+  await rebuildBuildings();
   rebuildTrees();
   aoPass.enabled = state.ao;
   bindHud(projection);

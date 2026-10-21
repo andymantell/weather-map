@@ -63,6 +63,11 @@ native resolution of the UK source inside those tiles, so treat finer detail as 
   swapped for their oriented rectangle and given a gable roof.
 - `trees.bin`: the individually mapped trees.
 
+`scripts/poc_terrain/build_masses.py <area>` then writes `masses-10.bin` and `masses-18.bin`: the footprints merged
+into street blocks (grow every footprint by 10 or 18 m, union, shrink back, cut the street network out again,
+simplify). Each mass gets the area-weighted mean height of the buildings inside it. For Plymouth that turns 97,585
+footprints into 6,366 fine masses (0.96 MB) or 3,822 coarse ones (0.49 MB), in about 45 seconds per level.
+
 The page (`src/poc-terrain/`) draws:
 
 - **Ground**: the fine height grid shaded from `cover.png`, with procedural detail per class: a Voronoi field
@@ -70,8 +75,9 @@ The page (`src/poc-terrain/`) draws:
   through housing, tarmac roads. Class edges are noise-warped so they do not show the texel grid.
 - **Surroundings**: the existing 1 km UK heightmap around the tile with the same shader, so the tile sits in a
   landscape. Everything outside the tile is drawn as fields because there is no land cover for it yet.
-- **Buildings**, three ways: real footprints, real footprints stretched vertically, and aggregated blocks (one box
-  per grid cell, sized by built-up fraction and mean height).
+- **Buildings**, four ways: real footprints, real footprints stretched vertically, merged street blocks (fine or
+  coarse) whose walls and roofs follow the terrain, and grid blocks (one box per grid cell, sized by built-up fraction
+  and mean height).
 - **Trees**: instanced conifers and broadleaves scattered over the woodland classes. The size slider makes each
   tree bigger and spaces them out by the same factor, so a forest stays a forest when drawn larger than life.
 - Sun shadows, sky lighting, N8AO ambient occlusion, a reflective sea and distance fog.
@@ -113,6 +119,25 @@ Life size: Plymouth is a grey smudge. Blocks of 250 m at 6× and trees at 5× st
 ![Plymouth from 26 km, life size](images/terrain-poc-plymouth-far-footprints.jpg)
 ![Plymouth from 26 km, 250 m blocks 6x, trees 5x](images/terrain-poc-plymouth-far-blocks.jpg)
 
+### Merged street blocks: blocks that follow the town's shape
+
+Grid blocks read well from a distance but look like a grid. Merged street blocks keep the real outline of the town
+and its street pattern, because they are built from the footprints and cut by the actual roads.
+
+Close up, fine masses at 1.5×: terraces become continuous street fronts, the city-centre blocks and the Citadel keep
+their real shapes.
+
+![Plymouth Hoe, fine merged street blocks](images/terrain-poc-plymouth-hoe-masses-fine.jpg)
+
+From 13 km, fine and coarse masses at 3× with trees at 3×:
+
+![Plymouth Sound, fine merged street blocks 3x](images/terrain-poc-plymouth-sound-masses-fine.jpg)
+![Plymouth Sound, coarse merged street blocks 3x](images/terrain-poc-plymouth-sound-masses-coarse.jpg)
+
+From 26 km, coarse masses at 6× and trees at 5×:
+
+![Plymouth from 26 km, coarse merged street blocks 6x](images/terrain-poc-plymouth-far-masses-coarse.jpg)
+
 ### Forests (Kielder)
 
 Close to Kielder Water at life size: conifer plantations, clear-fells, moorland and farmland.
@@ -131,13 +156,16 @@ trees. The edge of the detailed tile is obvious here because the surroundings ha
 
 ## Recommendation
 
+Andy's feedback (2026-10-21): the approach is fine, but not grid blocks; blocks must follow the real shape of the town.
+The merged street blocks above do that, so the plan uses them in place of grid blocks.
+
 Draw things at the scale that suits the camera, not one fixed scale:
 
 1. **Ground texture everywhere** from a baked UK land-cover raster plus the procedural detail. This is the biggest
    single improvement over today's height tint, and it is what makes the surroundings in the screenshots look flat.
-2. **Towns as blocks when far, footprints when near**, with vertical exaggeration that eases from about 4–6× at
-   regional zoom to 1× close up. Blocks are cheap enough for every settlement in the UK at once; footprints are
-   streamed per tile only near the camera.
+2. **Towns as merged street blocks when far, footprints when near**: coarse masses at regional zoom, fine masses
+   closer in, real footprints close up, with vertical exaggeration that eases from about 4–6× far out to 1× close up.
+   Masses are small enough to keep a whole region loaded; footprints are streamed per tile only near the camera.
 3. **Trees exaggerated with distance** in the same way (around 3–5× far, 1× near), using the woodland polygons for
    placement.
 
@@ -146,8 +174,10 @@ Draw things at the scale that suits the camera, not one fixed scale:
 - **Land cover**: rasterise WorldCover, OSM land use, water and roads per tile. At 8 m the UK is roughly 20
   gigapixels, so it needs a tile pyramid (for example 10 km tiles at 4–8 m, plus coarser levels) rather than one
   texture. The 1 km UK view could use a 50–100 m version.
-- **Blocks**: aggregate all ~30 million footprints onto a 100–250 m grid. That is a few MB for the whole UK and can be
-  one file.
+- **Merged street blocks**: run the closing-and-cut step per tile (with a margin so blocks do not split at tile
+  edges). Scaling Plymouth's sizes by footprint count gives very roughly 300 MB (fine) and 150 MB (coarse) for the
+  UK, so these are tiled too, but far fewer tiles are needed at once than for footprints. At about 45 seconds per level
+  for Plymouth's 97k buildings, the UK is a few CPU hours per level, and the tiles run in parallel.
 - **Footprints**: tile the 30 million footprints into binary tiles; Plymouth's 97k buildings are 4.7 MB, so the UK is
   likely over 1 GB in total and must be streamed by tile, which fits the planned S3/CloudFront hosting.
 - **Trees**: no need to bake points; the land-cover tiles carry woodland and the browser scatters trees.
@@ -159,7 +189,8 @@ Draw things at the scale that suits the camera, not one fixed scale:
   the tile edge is visible in the far views.
 - The field pattern shimmers and gets busy at distance; it needs to fade to an average colour with distance.
 - Woodland type (conifer vs broadleaf) is guessed, as above.
-- Blocks are on a regular grid, which looks artificial close up.
+- Grid blocks are on a regular grid, which looks artificial; merged street blocks replace them.
+- Merged masses use one mean height per block, so a block that mixes houses and a tower block averages them.
 - Performance on a real GPU has not been measured. Kielder has about 400 km² of woodland in the test box, which is
   about four million tree instances at life size (10 m spacing). The full map will need distance culling or
   impostors.
