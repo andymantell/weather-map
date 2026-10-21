@@ -15,11 +15,11 @@ const MAP_CLEARANCE = 0.3;
 const GROUND_FOG = { near: 4, far: 140 };
 
 const HINTS: Record<CameraMode, string> = {
-  map: 'Drag to pan, right-drag to rotate, scroll to zoom. Double-click anywhere to fly down to it.',
+  map: 'Drag to pan, right-drag to rotate, scroll to zoom. Double-click anywhere to fly down to it. H hides this panel.',
   flying: 'Flying…',
   ground:
     'Drag to look, WASD or arrows to move, Shift to go faster. Scroll or Q/E to rise and sink. ' +
-    'Double-click to hop somewhere, Esc for the map.',
+    'Double-click to hop somewhere, Esc for the map, H to hide this panel.',
 };
 
 /**
@@ -79,10 +79,14 @@ export class CameraRig {
     this.fitToHeight();
   }
 
-  /** Dives from the current view to stand on the ground at a point. */
+  /**
+   * Dives from the current view to stand on the ground at a point. heading is a compass bearing in radians
+   * (0 north, PI/2 east) and defaults to the current view direction; height is km above the ground.
+   */
   toGround(point: THREE.Vector3, options: { heading?: number; height?: number; instant?: boolean } = {}): void {
     const forward = this.camera.getWorldDirection(new THREE.Vector3());
-    const heading = options.heading ?? Math.atan2(-forward.x, -forward.z);
+    // Yaw turns anticlockwise seen from above, so it is minus the bearing.
+    const heading = options.heading !== undefined ? -options.heading : Math.atan2(-forward.x, -forward.z);
     const height = options.height ?? EYE_HEIGHT;
     const eye = new THREE.Vector3(point.x, this.sampler.heightAt(point.x, point.z) + height, point.z);
     const end: CameraPose = {
@@ -246,6 +250,10 @@ export function mountCameraControls(hud: HTMLElement, rig: CameraRig, hint: HTML
     button.blur();
   });
   hud.querySelector('h1')!.after(button);
+  window.addEventListener('keydown', (event) => {
+    if (event.code !== 'KeyH' || event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
+    hud.style.visibility = hud.style.visibility === 'hidden' ? '' : 'hidden';
+  });
   rig.onModeChange((mode) => {
     button.textContent = mode === 'ground' ? 'Back to map' : 'Drop to ground';
     button.disabled = mode === 'flying';
