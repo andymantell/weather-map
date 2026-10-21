@@ -13,16 +13,18 @@ Andy's constraints for this, from the project thread on 21 October 2026:
 
 ## Recommendation in one paragraph
 
-Make the whole thing static. The browser fetches Met Office NetCDF straight from the two public
-AWS buckets and decodes it itself, so there is **no scheduled server job at all**. The app and
-the ~10 GB of terrain tiles sit in one private S3 bucket in London behind one CloudFront
-distribution on CloudFront's **flat-rate Free plan** ($0/month, no overage charges). The only
-expected charge is a few cents a month of S3 storage above the plan's included 5 GB. The app
+Serve everything as static files. The app and the ~10 GB of terrain tiles sit in one private
+S3 bucket in London behind one CloudFront distribution on CloudFront's **flat-rate Free plan**
+($0/month, no overage charges). A small **Lambda weather bake** (added to the plan on 21 October
+2026) turns each new UKV run into compact per-hour files in the same bucket, so visitors get many
+hours of weather for a few MB and never touch the Met Office bucket. The expected charges are
+about $0.20 a month of S3 writes for the bake plus a few cents of storage above the plan's
+included 5 GB. Reading the Met Office files directly in the browser also works (`?live`) and stays
+as the no-server fallback. The app
 itself could equally go on GitHub Pages for free, with only the tiles on CloudFront (see
 [GitHub Pages for the app](#github-pages-for-the-app)). If the map
 ever gets popular, move to the flat-rate Pro plan at $15/month, which still can't run away. A
-Lambda job that pre-bakes the weather textures is kept as a fallback, and it would also sit
-inside the free tier.
+The bake's compute sits inside Lambda's free allowance.
 
 ## Finding: the browser can read the Met Office buckets directly
 
@@ -83,10 +85,10 @@ Checked on 21 October 2026, looking for any fair-use rule for the open-data buck
 Nothing forbids browser reads, and the CORS settings suggest they're expected. But every visitor
 fetching 29 to 41 MB (measured, see [in-browser-netcdf.md](in-browser-netcdf.md)) straight from a free beta
 service scales with our traffic: 1,000 visits is about 30 to 40 GB a month, and 100,000 visits would be about
-3 to 4 TB. Mirroring with the Lambda fallback
-below caps it at one download per hour, about 25 MB an hour or 18 GB a month, whatever our
-traffic. The plan is to read directly while traffic is small, and switch to the mirror if the map
-gets real use or the Met Office asks. Emailing the service desk to check is cheap.
+3 to 4 TB. The weather bake below (now part of the plan) fixes the load whatever our traffic: it
+reads each run once, from inside the same AWS region. Baking about 10 hours a run from whole files
+is about 285 MB a run, or about 200 GB a month; range-reading only the map's chunks, as the
+browser reader does, would roughly halve that. Emailing the service desk to check is cheap.
 
 ## Architecture
 
@@ -94,15 +96,17 @@ gets real use or the Met Office asks. Emailing the service desk to check is chea
                  visitor's browser
        ┌───────────────┴────────────────┐
        │                                │
-       ▼                                ▼
+       ▼                                ▼ (?live fallback only)
  CloudFront (flat-rate Free plan)   Met Office open-data buckets (eu-west-2)
        │  origin access control       met-office-atmospheric-model-data
        ▼                              met-office-nws-wave-model-data
- private S3 bucket, eu-west-2         (listed and range-read directly, CORS *)
-   /index.html, /assets/*  app
-   /data/*                 heightmap etc.
-   /detail/index.json      tile manifest
-   /detail/<x_y>/<file>    ~1,100 terrain tiles, ~10 GB
+ private S3 bucket, eu-west-2                    │
+   /index.html, /assets/*  app                   │ same-region reads, free
+   /data/*                 heightmap etc.        ▼
+   /detail/index.json      tile manifest     Lambda weather bake (arm64, 2 GB)
+   /detail/<x_y>/<file>    terrain tiles     run by EventBridge Scheduler
+   /weather/latest.json    newest run  ◀──── every 15 min; writes a new run's
+   /weather/<run>/*        hour packs        hourly and quarter-hourly packs
 ```
 
 - **One bucket, one distribution.** Keep the bucket private and let CloudFront read it through
@@ -122,8 +126,7 @@ gets real use or the Met Office asks. Emailing the service desk to check is chea
 
 ### Why not the other compute options
 
-With browser-side processing there is no compute to choose. If the fallback below is ever
-needed, Lambda is the right fit: the job is small, hourly and short. Fargate and Batch exist for
+Lambda is the right fit for the weather bake: the job is small, hourly and short. Fargate and Batch exist for
 longer or heavier jobs, and they'd add cost and setup for no benefit here, so I haven't priced
 them.
 
@@ -183,22 +186,31 @@ until roughly 175 GB past the free terabyte, but it is uncapped. A single viral 
 hundreds of dollars. Flat-rate Free can't charge more than the few cents of storage, and the
 worst case is a slower CDN.
 
-### Fallback: pre-bake the weather with Lambda
+### The weather bake (Lambda)
 
-If direct browser reads turn out too slow, too heavy for phones, or the Met Office bucket stops
-allowing them, run the existing `pipeline/` scripts hourly in Lambda (a container image, since
-`netCDF4` and `pyproj` are large) in eu-west-2, triggered by EventBridge Scheduler, writing the
-PNG+JSON into the same bucket under `/weather/latest/`.
+Added to the plan on 21 October 2026, at Andy's request, so the map can offer many timesteps
+cheaply. Measured and costed in [weather-bake-lambda.md](weather-bake-lambda.md); in short:
 
-- Now measured and costed in more detail, for many hours per run, in
-  [weather-bake-lambda.md](weather-bake-lambda.md) (about $0.20 a month). The original rough guess:
-  assume one 60-second run a hour at 2 GB memory. 720 runs × 60 s × 2 GB
-  = 86,400 GB-s a month, inside the 400,000 GB-s free tier. Without the free tier it would be
-  $1.44.
-- Reading the Met Office bucket from Lambda in the same region has no transfer charge.
-- About 4,000 PUTs a month comes to about $0.02.
-- The textures add about 7 MB a visit to our CloudFront transfer, which uses up the Free plan's
-  100 GB sooner (about 3,000 visits instead of 4,000).
+- **What it does.** EventBridge Scheduler runs a Lambda (arm64, 2 GB, eu-west-2) every 15
+  minutes. If a new UKV run has finished landing in the Met Office bucket, it bakes every hour the
+  run covers ahead of now (about 10 hours for the hourly T+12 runs) into `/weather/<run>/`:
+  one pack per hour (cloud volume at 4-bit, cloud base, high cloud; about 2.7 MB gzipped) and one
+  per quarter hour (rain rate and CAPE; about 0.24 MB). Then it updates `/weather/latest.json`.
+- **Code.** Preferably Node, reusing `src/data/hdf5.ts` and the bake in `src/weather/ukvLive.ts`,
+  so it needs no dependencies or container image. The Python in `pipeline/` would also work.
+- **Caching.** Packs are immutable and cached for a year; only `latest.json` gets a short cache
+  time. A lifecycle rule deletes runs older than a day.
+- **Cost.** About 79,000 GB-s of compute a month, inside the free 400,000, and about 35,000 PUTs
+  ($0.18). Storage for one or two runs is under $0.01. Reading the Met Office bucket from the
+  same region is free.
+- **Per visit.** The next hour is 7 to 9 MB (against 29 to 41 MB read directly from the Met
+  Office files), and all 10 hours about 36 MB. At 7 to 9 MB, the Free plan's 100 GB covers about
+  10,000 visits a month.
+- **Load on the Met Office bucket.** This also settles the question above: the bucket sees one
+  download per run, whatever our traffic.
+- **Freshness.** No change. The bake can only start once a run is in the public bucket, about
+  3 h 15 min after its nominal time. Radar rain for "now" (also a free public bucket, about
+  5 minutes behind) is a possible later addition; see weather-bake-lambda.md.
 
 ## Cheaper or different: outside AWS
 
@@ -287,7 +299,10 @@ nothing on live data. If a rendering technique ever needs compute, try the WebGP
 
 1. Done for UKV: [in-browser-netcdf.md](in-browser-netcdf.md) (`?live` in the app). Still to do: the wave
    chunks, and timing on a phone and on the laptop.
-2. Point the app at a configurable data base URL (the bake handoff already proposes
+2. Build the weather bake and test it writing to a local folder, with `?live` pointed at that
+   folder, before anything is deployed. Not started; Andy asked only for it to be in the plan
+   for now (21 October 2026).
+3. Point the app at a configurable data base URL (the bake handoff already proposes
    `VITE_DETAIL_URL`) so the same build works locally and on CloudFront.
-3. When the bake is done and Andy says go: create the bucket and distribution, choose the Free
-   flat-rate plan, upload, and add a budget alert.
+4. When the bake is done and Andy says go: create the bucket and distribution, choose the Free
+   flat-rate plan, upload, deploy the weather Lambda and its schedule, and add a budget alert.
