@@ -338,11 +338,6 @@ vec4 sampleSharp(sampler2D tex, vec2 uv) {
 void main() {
   vec4 cloud = texture(uCloud, vUv);
   vec4 shadow = texture(uShadow, vUv);
-  if (uReset) {
-    outCloud = cloud;
-    outShadow = vec4(shadow.rg, 1.0, 1.0);
-    return;
-  }
 
   vec2 cloudUv = vUv;
   vec2 shadowUv = vUv;
@@ -364,29 +359,36 @@ void main() {
   vec4 histCloud = uMoving ? sampleSharp(uHistoryCloud, cloudUv) : texture(uHistoryCloud, cloudUv);
   vec4 histShadow = texture(uHistoryShadow, shadowUv);
 
-  if (uMoving) {
-    // Variance clipping against the 3x3 neighbourhood of this frame's (noisy, single sample) result.
-    vec4 m1 = vec4(0.0);
-    vec4 m2 = vec4(0.0);
-    float s1 = 0.0;
-    float s2 = 0.0;
-    for (int y = -1; y <= 1; y++) {
-      for (int x = -1; x <= 1; x++) {
-        vec2 o = vec2(x, y) * uTexel;
-        vec4 c = texture(uCloud, vUv + o);
-        m1 += c;
-        m2 += c * c;
-        float sh = texture(uShadow, vUv + o).r;
-        s1 += sh;
-        s2 += sh * sh;
-      }
+  // 3x3 neighbourhood of this frame's (noisy, single sample) result: its mean denoises fresh pixels and its spread
+  // clips stale history.
+  vec4 m1 = vec4(0.0);
+  vec4 m2 = vec4(0.0);
+  float s1 = 0.0;
+  float s2 = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 o = vec2(x, y) * uTexel;
+      vec4 c = texture(uCloud, vUv + o);
+      m1 += c;
+      m2 += c * c;
+      float sh = texture(uShadow, vUv + o).r;
+      s1 += sh;
+      s2 += sh * sh;
     }
-    vec4 mean = m1 / 9.0;
+  }
+  vec4 mean = m1 / 9.0;
+  float shMean = s1 / 9.0;
+  if (uMoving) {
     vec4 sigma = sqrt(max(m2 / 9.0 - mean * mean, 0.0));
     histCloud = clamp(histCloud, mean - 1.5 * sigma, mean + 1.5 * sigma);
-    float shMean = s1 / 9.0;
     float shSigma = sqrt(max(s2 / 9.0 - shMean * shMean, 0.0));
     histShadow.r = clamp(histShadow.r, shMean - 1.5 * shSigma, shMean + 1.5 * shSigma);
+  }
+
+  if (uReset) {
+    outCloud = mean;
+    outShadow = vec4(shMean, shadow.g, 1.0, 1.0);
+    return;
   }
 
   float n = cloudValid ? min(texture(uHistoryShadow, cloudUv).b + 1.0, uMaxHistory) : 1.0;
@@ -397,8 +399,13 @@ void main() {
     n = min(n, mix(uMaxHistory, 1.0, smoothstep(0.01, 0.08, travel)));
   }
   float nShadow = shadowValid ? n : 1.0;
+  // Pixels with little or no history (start, disocclusion, fast travel) take the blurred neighbourhood instead of
+  // their own grainy sample, fading to the sharp sample as history builds. Early frames weigh 1/n of a still view's
+  // final average, so the blur does not linger once it converges.
+  cloud = mix(cloud, mean, clamp(1.5 / n - 0.15, 0.0, 1.0));
+  float shCur = mix(shadow.r, shMean, clamp(1.5 / nShadow - 0.15, 0.0, 1.0));
   outCloud = mix(histCloud, cloud, 1.0 / n);
-  outShadow = vec4(mix(histShadow.r, shadow.r, 1.0 / nShadow), shadow.g, n, 1.0);
+  outShadow = vec4(mix(histShadow.r, shCur, 1.0 / nShadow), shadow.g, n, 1.0);
 }
 `;
 
