@@ -32,3 +32,9 @@ to change the extent or resolution:
 pip install -r scripts/requirements.txt
 npm run heightmap
 ```
+
+## Terrain, towns and forests prototype
+
+`poc/terrain/` (open `/poc/terrain/` on the dev server) is a separate page prototyping detailed terrain, buildings
+and trees for two test areas, Plymouth and Kielder Forest, built from Overture Maps by
+`scripts/poc_terrain/build_area.py`. See [`docs/terrain-towns-forests-poc.md`](docs/terrain-towns-forests-poc.md).

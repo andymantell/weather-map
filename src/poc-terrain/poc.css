@@ -1,0 +1,15 @@
+#hud {
+  display: grid;
+  gap: 6px;
+  max-width: 300px;
+}
+
+#hud select,
+#hud input[type='range'] {
+  flex: 1;
+}
+
+#hud output {
+  min-width: 2.5em;
+  text-align: right;
+}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Terrain PoC</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div id="hud">
+      <h1>Terrain PoC</h1>
+      <label>Area
+        <select id="area"><option value="plymouth">Plymouth</option><option value="kielder">Kielder Forest</option></select>
+      </label>
+      <label>View <select id="view"></select></label>
+      <label>Buildings
+        <select id="buildings">
+          <option value="footprints">Real footprints</option>
+          <option value="blocks">Aggregated blocks</option>
+          <option value="off">Off</option>
+        </select>
+      </label>
+      <label>Building height × <input id="bscale" type="range" min="1" max="8" step="0.5" /><output id="bscale-value"></output></label>
+      <label>Block size (m) <input id="cell" type="range" min="50" max="1000" step="25" /><output id="cell-value"></output></label>
+      <label>Trees <select id="trees"><option value="on">On</option><option value="off">Off</option></select></label>
+      <label>Tree size × <input id="tscale" type="range" min="1" max="8" step="0.5" /><output id="tscale-value"></output></label>
+      <label>Terrain height × <input id="terrain" type="range" min="1" max="5" step="0.25" /><output id="terrain-value"></output></label>
+      <label><input id="ao" type="checkbox" /> Ambient occlusion</label>
+      <p id="attribution" class="hint"></p>
+      <p class="hint">Drag to pan, right-drag to rotate, scroll to zoom.</p>
+    </div>
+    <div id="loading">Loading area…</div>
+    <script type="module" src="/src/poc-terrain/main.ts"></script>
+  </body>
+</html>

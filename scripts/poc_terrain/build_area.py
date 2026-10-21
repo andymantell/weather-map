@@ -1,0 +1,371 @@
+"""Build the data for one terrain proof-of-concept area (see docs/terrain-poc.md).
+
+For a small lon/lat box this writes, into public/poc-terrain/<area>/:
+
+- height.png    Terrarium-encoded heights on a fine LAEA grid (AWS Terrain Tiles).
+- cover.png     One byte per texel land-cover class (see CLASSES), rasterised from
+                Overture Maps base layers (OpenStreetMap land/land_use/water plus
+                ESA WorldCover land_cover) and Overture roads.
+- buildings.bin Overture building footprints with a height for each.
+- trees.bin     Individually mapped trees (OpenStreetMap natural=tree via Overture).
+- meta.json     Grid extents and sources.
+
+Overture Maps is read straight from its public S3 bucket, so no API key is needed.
+Coordinates are the app's UKV LAEA projection in metres.
+
+Usage: python3 scripts/poc_terrain/build_area.py plymouth
+"""
+
+import json
+import math
+import os
+import pathlib
+import struct
+import sys
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor
+
+import numpy as np
+import pyarrow as pa
+import pyarrow.dataset as ds
+import pyarrow.fs as pafs
+import pyarrow.parquet as pq
+import shapely
+from PIL import Image, ImageDraw
+from scipy.ndimage import distance_transform_edt
+from pyproj import Transformer
+
+PROJ = "+proj=laea +lat_0=54.9 +lon_0=-2.5 +x_0=0 +y_0=0 +ellps=GRS80 +units=m"
+OVERTURE = "overturemaps-us-west-2/release/2026-09-23.0"
+TILE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
+
+AREAS = {
+    # Lon/lat box, height grid spacing (m), cover texel size (m).
+    "plymouth": dict(bbox=(-4.25, 50.33, -4.0, 50.45), spacing=20, texel=4),
+    "kielder": dict(bbox=(-2.75, 55.1, -2.35, 55.33), spacing=25, texel=8),
+}
+
+# Land-cover classes written to cover.png; src/poc-terrain/cover.ts mirrors these.
+CLASSES = dict(
+    sea=0, fields=1, park=2, broadleaf=3, conifer=4, heath=5, rock=6, sand=7,
+    wetland=8, water=9, urban=10, industrial=11, minor_road=12, major_road=13,
+    farmyard=14, rail=15, path=16,
+)
+
+UPLAND_SHRUB = 200  # temporary class while rasterising
+UPLAND_M = 250
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+CACHE = ROOT / ".cache" / "poc-terrain"
+
+to_lonlat = Transformer.from_crs(PROJ, "EPSG:4326", always_xy=True)
+from_lonlat = Transformer.from_crs("EPSG:4326", PROJ, always_xy=True)
+
+
+def overture(theme, kind, bbox, columns, area):
+    """Reads one Overture layer clipped to bbox (by feature bbox), cached as parquet."""
+    path = CACHE / f"{area}_{kind}.parquet"
+    if path.exists():
+        return pq.read_table(path)
+    fs = pafs.S3FileSystem(
+        anonymous=True, region="us-west-2",
+        proxy_options=os.environ.get("HTTPS_PROXY", ""),
+        tls_ca_file_path=os.environ.get("SSL_CERT_FILE") or None,
+    )
+    dataset = ds.dataset(f"{OVERTURE}/theme={theme}/type={kind}/", filesystem=fs, format="parquet")
+    xmin, ymin, xmax, ymax = bbox
+    f = ((ds.field("bbox", "xmax") > xmin) & (ds.field("bbox", "xmin") < xmax)
+         & (ds.field("bbox", "ymax") > ymin) & (ds.field("bbox", "ymin") < ymax))
+    with ThreadPoolExecutor(32) as ex:
+        parts = [t for t in ex.map(lambda fr: fr.to_table(filter=f, columns=columns),
+                                   dataset.get_fragments()) if t.num_rows]
+    table = pa.concat_tables(parts)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, path)
+    return table
+
+
+def project(wkb):
+    geoms = shapely.from_wkb(wkb)
+    return shapely.transform(geoms, lambda c: np.column_stack(from_lonlat.transform(c[:, 0], c[:, 1])))
+
+
+def fetch_tile(z, x, y):
+    path = CACHE / "tiles" / f"{z}_{x}_{y}.png"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with urllib.request.urlopen(TILE_URL.format(z=z, x=x, y=y)) as r:
+            path.write_bytes(r.read())
+    rgb = np.asarray(Image.open(path).convert("RGB"), dtype=np.float64)
+    return rgb[..., 0] * 256 + rgb[..., 1] + rgb[..., 2] / 256 - 32768
+
+
+def sample_elevation(lon, lat, z=13):
+    n = 2 ** z
+    px = (lon + 180.0) / 360.0 * n
+    lat_r = np.radians(lat)
+    py = (1.0 - np.log(np.tan(lat_r) + 1.0 / np.cos(lat_r)) / math.pi) / 2.0 * n
+    tx0, ty0, tx1, ty1 = int(px.min()), int(py.min()), int(px.max()), int(py.max())
+    mosaic = np.vstack([np.hstack([fetch_tile(z, tx, ty) for tx in range(tx0, tx1 + 1)])
+                        for ty in range(ty0, ty1 + 1)])
+    px = (px - tx0) * 256 - 0.5
+    py = (py - ty0) * 256 - 0.5
+    ix = np.clip(np.floor(px).astype(int), 0, mosaic.shape[1] - 2)
+    iy = np.clip(np.floor(py).astype(int), 0, mosaic.shape[0] - 2)
+    fx, fy = px - ix, py - iy
+    return (mosaic[iy, ix] * (1 - fx) * (1 - fy) + mosaic[iy, ix + 1] * fx * (1 - fy)
+            + mosaic[iy + 1, ix] * (1 - fx) * fy + mosaic[iy + 1, ix + 1] * fx * fy)
+
+
+class Raster:
+    """Draws projected geometries onto the cover grid with PIL."""
+
+    def __init__(self, x0, y1, texel, width, height, fill):
+        self.x0, self.y1, self.texel = x0, y1, texel
+        self.img = Image.new("L", (width, height), fill)
+        self.draw = ImageDraw.Draw(self.img)
+
+    def px(self, coords):
+        c = np.asarray(coords)
+        return list(zip((c[:, 0] - self.x0) / self.texel, (self.y1 - c[:, 1]) / self.texel))
+
+    def polygon(self, geom, value):
+        for poly in getattr(geom, "geoms", [geom]):
+            if poly.geom_type != "Polygon" or poly.is_empty:
+                continue
+            self.draw.polygon(self.px(poly.exterior.coords), fill=value)
+            # Holes go back to whatever was underneath only approximately: fill them with
+            # a neutral class so courtyards in woods and lakes in fields stay open.
+            for hole in poly.interiors:
+                self.draw.polygon(self.px(hole.coords), fill=self.hole_fill)
+
+    def line(self, geom, value, width_m):
+        w = max(1, round(width_m / self.texel))
+        for line in getattr(geom, "geoms", [geom]):
+            if line.geom_type == "LineString":
+                self.draw.line(self.px(line.coords), fill=value, width=w, joint="curve")
+            elif line.geom_type == "Polygon":
+                self.polygon(line, value)
+
+
+ROAD_WIDTHS = {
+    "motorway": (13, 18), "trunk": (13, 14), "primary": (13, 11), "secondary": (13, 9),
+    "tertiary": (12, 8), "residential": (12, 6), "unclassified": (12, 5), "living_street": (12, 5),
+    "service": (12, 4), "track": (16, 3), "footway": (16, 2), "path": (16, 2), "cycleway": (16, 2),
+    "bridleway": (16, 2),
+}
+
+# Heights in metres when Overture has neither height nor num_floors.
+CLASS_HEIGHTS = {
+    "house": 6.5, "detached": 7, "semidetached_house": 7, "terrace": 7.5, "residential": 7,
+    "bungalow": 4, "apartments": 13, "garage": 2.8, "garages": 2.8, "shed": 2.5, "hut": 2.5,
+    "retail": 8, "commercial": 10, "office": 14, "industrial": 9, "warehouse": 9,
+    "church": 14, "cathedral": 25, "school": 8, "university": 14, "hospital": 16,
+    "hotel": 15, "farm_auxiliary": 6, "barn": 7, "greenhouse": 3, "civic": 10, "public": 10,
+}
+RESIDENTIAL = {"house", "detached", "semidetached_house", "terrace", "residential", "bungalow", None}
+
+
+def building_height(row, area):
+    if row["height"] is not None and row["height"] > 1:
+        return float(row["height"])
+    if row["num_floors"] is not None and row["num_floors"] > 0:
+        return row["num_floors"] * 3.0 + 1.0
+    if row["class"] in CLASS_HEIGHTS:
+        return CLASS_HEIGHTS[row["class"]]
+    return 3.0 if area < 40 else 6.5 if area < 250 else 9.0
+
+
+def main(area_name):
+    cfg = AREAS[area_name]
+    bbox, spacing, texel = cfg["bbox"], cfg["spacing"], cfg["texel"]
+    out = ROOT / "public" / "poc-terrain" / area_name
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Grid in LAEA covering the lon/lat box, snapped to the spacing.
+    cx, cy = from_lonlat.transform([bbox[0], bbox[2], bbox[0], bbox[2]], [bbox[1], bbox[1], bbox[3], bbox[3]])
+    x0 = math.ceil(max(cx[0], cx[2]) / spacing) * spacing
+    x1 = math.floor(min(cx[1], cx[3]) / spacing) * spacing
+    y0 = math.ceil(max(cy[0], cy[1]) / spacing) * spacing
+    y1 = math.floor(min(cy[2], cy[3]) / spacing) * spacing
+    xs = np.arange(x0, x1 + spacing, spacing)
+    ys = np.arange(y1, y0 - spacing, -spacing)
+    gx, gy = np.meshgrid(xs, ys)
+    lon, lat = (np.asarray(a) for a in to_lonlat.transform(gx, gy))
+    heights = sample_elevation(lon, lat)
+    print("heights", heights.shape, heights.min(), heights.max())
+
+    # --- Land cover ---------------------------------------------------------
+    cw, ch = round((x1 - x0) / texel), round((y1 - y0) / texel)
+    land = overture("base", "land", bbox, ["subtype", "class", "geometry"], area_name)
+    land_geoms = project(land["geometry"].to_numpy(zero_copy_only=False))
+    land_sub = land["subtype"].to_pylist()
+    land_cls = land["class"].to_pylist()
+    has_coast = any(s == "land" for s in land_sub)
+    C = CLASSES
+    r = Raster(x0, y1, texel, cw, ch, C["sea"] if has_coast else C["fields"])
+    r.hole_fill = C["fields"]
+    for g, s in zip(land_geoms, land_sub):
+        if s == "land":
+            r.polygon(g, C["fields"])
+    if has_coast:
+        sea_mask = np.asarray(r.img) == C["sea"]
+
+    cover = overture("base", "land_cover", bbox, ["subtype", "cartography", "geometry"], area_name)
+    fine = [c["min_zoom"] >= 8 for c in cover["cartography"].to_pylist()]
+    cover_map = {"urban": C["urban"], "forest": C["broadleaf"], "shrub": UPLAND_SHRUB, "barren": C["rock"],
+                 "wetland": C["wetland"], "grass": C["fields"], "crop": C["fields"], "moss": C["heath"]}
+    for g, s, f in zip(project(cover["geometry"].to_numpy(zero_copy_only=False)), cover["subtype"].to_pylist(), fine):
+        if f and s in cover_map:
+            r.polygon(g, cover_map[s])
+
+    use = overture("base", "land_use", bbox, ["subtype", "class", "geometry"], area_name)
+    use_map = {"residential": C["urban"], "developed": C["industrial"], "park": C["park"],
+               "recreation": C["park"], "golf": C["park"], "cemetery": C["park"], "managed": C["park"],
+               "horticulture": C["park"], "agriculture": C["fields"], "resource_extraction": C["rock"],
+               "education": C["urban"], "medical": C["urban"], "military": C["fields"],
+               "transportation": C["industrial"]}
+    for g, s, c in zip(project(use["geometry"].to_numpy(zero_copy_only=False)), use["subtype"].to_pylist(), use["class"].to_pylist()):
+        if c == "farmyard":
+            r.polygon(g, C["farmyard"])
+        elif s in use_map:
+            r.polygon(g, use_map[s])
+
+    land_map = {("forest", "forest"): C["conifer"], ("forest", "wood"): C["broadleaf"],
+                ("shrub", "heath"): C["heath"], ("shrub", "scrub"): C["heath"], ("rock", "bare_rock"): C["rock"],
+                ("rock", "scree"): C["rock"], ("sand", "sand"): C["sand"], ("sand", "beach"): C["sand"],
+                ("wetland", "wetland"): C["wetland"], ("grass", "grassland"): C["fields"]}
+    for g, s, c in zip(land_geoms, land_sub, land_cls):
+        if (s, c) in land_map:
+            r.polygon(g, land_map[(s, c)])
+
+    water = overture("base", "water", bbox, ["subtype", "class", "geometry"], area_name)
+    for g, s, c in zip(project(water["geometry"].to_numpy(zero_copy_only=False)), water["subtype"].to_pylist(), water["class"].to_pylist()):
+        if c == "swimming_pool":
+            continue
+        value = C["sea"] if s in ("ocean", "physical") and has_coast else C["water"]
+        if g.geom_type in ("Polygon", "MultiPolygon"):
+            r.polygon(g, value)
+        else:
+            r.line(g, C["water"], 12 if s == "river" else 3)
+
+    roads = overture("transportation", "segment", bbox, ["subtype", "class", "geometry"], area_name)
+    order = sorted(zip(project(roads["geometry"].to_numpy(zero_copy_only=False)), roads["subtype"].to_pylist(), roads["class"].to_pylist()),
+                   key=lambda t: ROAD_WIDTHS.get(t[2], (0, 0))[1])
+    # Narrow roads first so wider ones draw over them at junctions.
+    for g, s, c in order:
+        if s == "rail":
+            r.line(g, C["rail"], 5)
+        elif c in ROAD_WIDTHS and s == "road":
+            value, width = ROAD_WIDTHS[c]
+            r.line(g, value, width)
+
+    cover_arr = np.asarray(r.img).copy()
+    # ESA WorldCover calls a lot of hedged lowland pasture "shrub"; only treat it as
+    # heath or moorland on high ground. Woods on high ground are mostly conifer plantations.
+    cj, ci = np.mgrid[0:ch, 0:cw]
+    hj = np.clip((cj * texel / spacing).astype(int), 0, len(ys) - 1)
+    hi = np.clip((ci * texel / spacing).astype(int), 0, len(xs) - 1)
+    high = heights[hj, hi] > UPLAND_M
+    shrub = cover_arr == UPLAND_SHRUB
+    cover_arr[shrub] = np.where(high[shrub], C["heath"], C["fields"])
+    esa_wood = cover_arr == C["broadleaf"]
+    cover_arr[esa_wood & high] = C["conifer"]
+    if has_coast:
+        # Keep the coastline authoritative over land-use and harbour polygons that spill into the sea.
+        spill = sea_mask & ~np.isin(cover_arr, [C["sand"], C["major_road"], C["minor_road"], C["rail"]])
+        cover_arr[spill] = C["sea"]
+    Image.fromarray(cover_arr, "L").save(out / "cover.png", optimize=True)
+
+    # Force the heightmap to agree with the coastline, sampled at grid points.
+    gi = np.clip(((gx - x0) / texel).astype(int), 0, cw - 1)
+    gj = np.clip(((y1 - gy) / texel).astype(int), 0, ch - 1)
+    grid_cover = cover_arr[gj, gi]
+    if has_coast:
+        # Signed distance to the coast (m, positive on land) from the fine cover raster,
+        # so the 0 m contour, and with it the waterline, follows the coast smoothly
+        # between grid points instead of stepping from vertex to vertex.
+        sea = cover_arr == C["sea"]
+        signed = (distance_transform_edt(~sea) - distance_transform_edt(sea)) * texel
+        d = signed[gj, gi]
+        far = np.where(d > 0, np.maximum(heights, 0.5), np.minimum(heights, -2.0))
+        t = np.clip((np.abs(d) - 20) / 20, 0, 1)
+        heights = d * 0.08 * (1 - t) + far * t
+    v = np.round(heights * 4) / 4 + 32768
+    rr = np.floor(v / 256)
+    gg = np.floor(v - rr * 256)
+    bb = np.round((v - rr * 256 - gg) * 256)
+    Image.fromarray(np.stack([rr, gg, bb], -1).astype(np.uint8), "RGB").save(out / "height.png", optimize=True)
+
+    def height_at(x, y):
+        fx = np.clip((x - x0) / spacing, 0, len(xs) - 1.001)
+        fy = np.clip((y1 - y) / spacing, 0, len(ys) - 1.001)
+        i, j = int(fx), int(fy)
+        a, b = fx - i, fy - j
+        return float(heights[j, i] * (1 - a) * (1 - b) + heights[j, i + 1] * a * (1 - b)
+                     + heights[j + 1, i] * (1 - a) * b + heights[j + 1, i + 1] * a * b)
+
+    # --- Buildings ----------------------------------------------------------
+    bt = overture("buildings", "building", bbox,
+                  ["height", "num_floors", "class", "sources", "geometry"], area_name)
+    rows = bt.select(["height", "num_floors", "class"]).to_pylist()
+    geoms = project(bt["geometry"].to_numpy(zero_copy_only=False))
+    stats = {"total": len(rows), "osm": 0, "osm_levels": 0, "osm_height": 0, "ml": 0}
+    for s, row in zip(bt["sources"].to_pylist(), rows):
+        if s[0]["dataset"] == "OpenStreetMap":
+            stats["osm"] += 1
+            stats["osm_levels"] += row["num_floors"] is not None
+            stats["osm_height"] += row["height"] is not None
+        else:
+            stats["ml"] += 1
+    buf = bytearray()
+    count = 0
+    for g, row in zip(geoms, rows):
+        if g.geom_type == "MultiPolygon":
+            g = max(g.geoms, key=lambda p: p.area)
+        if g.geom_type != "Polygon" or g.area < 8:
+            continue
+        c = g.centroid
+        if not (x0 <= c.x <= x1 and y0 <= c.y <= y1):
+            continue
+        h = building_height(row, g.area)
+        roof = 0
+        ring = g.simplify(0.4)
+        rect = g.minimum_rotated_rectangle
+        if (row["class"] in RESIDENTIAL and 25 < g.area < 300 and h < 12
+                and g.area / max(rect.area, 1e-6) > 0.82):
+            ring, roof = rect, 1  # simple house: gable roof on its oriented rectangle
+        coords = np.asarray(ring.exterior.coords)[:-1]
+        if not ring.exterior.is_ccw:
+            coords = coords[::-1]
+        if len(coords) < 3:
+            continue
+        base = min(height_at(x, y) for x, y in coords)
+        buf += struct.pack("<HBBff", len(coords), roof, 0, h, base)
+        buf += (coords - [x0, y1]).astype("<f4").tobytes()
+        count += 1
+    (out / "buildings.bin").write_bytes(bytes(buf))
+
+    # --- Individually mapped trees -----------------------------------------
+    tree_xy = [g for g, s, c in zip(land_geoms, land_sub, land_cls) if s == "tree" and c == "tree" and g.geom_type == "Point"]
+    tbuf = bytearray()
+    for p in tree_xy:
+        if x0 <= p.x <= x1 and y0 <= p.y <= y1:
+            tbuf += struct.pack("<fff", p.x - x0, p.y - y1, height_at(p.x, p.y))
+    (out / "trees.bin").write_bytes(bytes(tbuf))
+
+    meta = {
+        "proj": PROJ, "xMin": x0, "xMax": x1, "yMin": y0, "yMax": y1,
+        "spacing": spacing, "width": len(xs), "height": len(ys),
+        "coverTexel": texel, "coverWidth": cw, "coverHeight": ch,
+        "minHeight": float(heights.min()), "maxHeight": float(heights.max()),
+        "buildings": count, "buildingStats": stats, "trees": len(tbuf) // 12,
+        "hasCoast": has_coast, "classes": CLASSES,
+        "attribution": "Overture Maps Foundation (incl. © OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles",
+    }
+    (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+    print(json.dumps(meta))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1])
