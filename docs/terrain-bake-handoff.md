@@ -167,7 +167,7 @@ grading, markings, hedge looks, water, view distances) can carry on afterwards w
    the north have fewer clear scenes, so check coverage. `build_imagery.py` falls back to the
    all-scene median for pixels never seen clear, which may leave cloud traces. The colour grade is
    in the shader, so the bake stores the raw image.
-6. **Coast:** heights near the coast use a signed-distance shoreline (`build_area.py`). Check it
+6. **Coast:** heights near the coast use a signed-distance shoreline (`build_area.py`). It flattens cliffs; see `docs/coastal-cliffs.md` for the proposed fix. Check it
    on cliffs (e.g. Cornwall) and on large estuaries.
 
 ## Known issues today (not blockers for the bake)
