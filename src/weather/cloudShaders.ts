@@ -34,6 +34,7 @@ uniform vec3 uCamPos;
 uniform vec3 uCamForward;
 uniform float uFar;
 uniform float uFrame;
+uniform vec2 uTexel;        // one cloud-target pixel in uv
 uniform int uSteps;
 
 uniform vec2 uGridWest;      // x of the first cell centre, y of the first row's centre (LAEA m)
@@ -90,7 +91,8 @@ struct Sample {
   float hFrac;   // height through the cloud column, for ambient light
 };
 
-Sample sampleAt(vec3 p, bool cheap) {
+// lod: 0 near, 1 far. Far away the noise is finer than a pixel and only sparkles, so it fades out.
+Sample sampleAt(vec3 p, bool cheap, float lod) {
   Sample s = Sample(0.0, 0.0, 0.5);
   vec2 laea = toLaea(p);
   vec2 uv = gridUv(laea);
@@ -104,11 +106,14 @@ Sample sampleAt(vec3 p, bool cheap) {
   float sigma = uDensity;
   if (h < uVolumeTop) {
     coverage = texture(uVolume, vec3(uv, h / uVolumeTop)).r;
+    // Thin the cloud just below its top so the noise breaks a flat deck into billows.
+    float above = texture(uVolume, vec3(uv, (h + 0.5) / uVolumeTop)).r;
+    coverage *= mix(0.6, 1.0, above);
     s.hFrac = h / uVolumeTop;
   } else if (h > 7.5 && h < 10.5) {
     // High cloud above the 3D data: a thin cirrus sheet from the high-cloud fraction.
     coverage = f2.b * smoothstep(7.5, 8.3, h) * (1.0 - smoothstep(9.6, 10.5, h));
-    sigma = 0.8;
+    sigma = 0.06;
     s.hFrac = 1.0;
   }
 
@@ -118,6 +123,9 @@ Sample sampleAt(vec3 p, bool cheap) {
     vec3 sp = vec3(p.x / 1.2, h / 7.0, p.z / 1.2);
     s.rain = rain * (0.4 + texture(uDetail, sp).r) * smoothstep(0.0, 0.3, base - h + 0.15);
   }
+  // Fade out towards the edge of the baked grid instead of stopping at a straight line.
+  vec2 edge = min(uv, 1.0 - uv);
+  coverage *= smoothstep(0.0, 0.03, min(edge.x, edge.y));
   if (coverage < 0.02) return s;
 
   // Convective columns (high CAPE) billow; layered cloud is flatter and smoother.
@@ -127,10 +135,11 @@ Sample sampleAt(vec3 p, bool cheap) {
   float fbm = n.g * 0.625 + n.b * 0.25 + n.a * 0.125;
   float shape = remap(n.r, fbm - 1.0, 1.0, 0.0, 1.0);
   float d = clamp(remap(shape, 1.0 - coverage, 1.0, 0.0, 1.0), 0.0, 1.0) * coverage;
-  if (!cheap && d > 0.0) {
+  d = mix(d, coverage * 0.6, lod * 0.8);
+  if (!cheap && d > 0.0 && lod < 0.98) {
     vec3 dn = texture(uDetail, q / 1.4 + n.gba * 0.3).rgb;
     float dfbm = dn.r * 0.625 + dn.g * 0.25 + dn.b * 0.125;
-    float erosion = mix(0.25, 0.45, convective);
+    float erosion = mix(0.25, 0.45, convective) * (1.0 - lod);
     d = clamp(remap(d, dfbm * erosion, 1.0, 0.0, 1.0), 0.0, 1.0);
   }
   s.cloud = d * sigma;
@@ -144,7 +153,7 @@ float sunOpticalDepth(vec3 p, int steps, float firstStep) {
   for (int i = 0; i < 8; i++) {
     if (i >= steps) break;
     pos += uSunDir * s * 0.5;
-    od += sampleAt(pos, true).cloud * s;
+    od += sampleAt(pos, true, 1.0).cloud * s;
     pos += uSunDir * s * 0.5;
     s *= 1.7;
   }
@@ -163,7 +172,9 @@ float ign(vec2 px) {
 }
 
 void main() {
-  vec4 view = uInvProj * vec4(vUv * 2.0 - 1.0, 1.0, 1.0);
+  // Sub-pixel jitter (R2 sequence) so accumulated frames also antialias.
+  vec2 sub = fract(vec2(0.7548776662, 0.5698402910) * uFrame) - 0.5;
+  vec4 view = uInvProj * vec4((vUv + sub * uTexel) * 2.0 - 1.0, 1.0, 1.0);
   vec3 rd = normalize((uCamWorld * vec4(view.xyz / view.w, 0.0)).xyz);
   vec3 ro = uCamPos;
 
@@ -189,7 +200,7 @@ void main() {
     for (int i = 0; i < 1024; i++) {
       if (i >= uSteps || t > range.y || T < 0.01) break;
       vec3 p = ro + rd * t;
-      Sample s = sampleAt(p, false);
+      Sample s = sampleAt(p, false, smoothstep(60.0, 450.0, t));
       float sigmaRain = s.rain > 0.0 ? 0.16 * pow(s.rain, 0.74) : 0.0;
       float sigmaT = s.cloud + sigmaRain;
       if (sigmaT > 1e-4) {
@@ -240,7 +251,7 @@ void main() {
     float s = toTop / 10.0;
     vec3 pos = p + uSunDir * s * jitter;
     for (int i = 0; i < 10; i++) {
-      od += sampleAt(pos, true).cloud * s;
+      od += sampleAt(pos, true, 1.0).cloud * s;
       pos += uSunDir * s;
     }
     shadow = exp(-od);

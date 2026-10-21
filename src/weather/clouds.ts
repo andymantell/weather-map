@@ -71,6 +71,16 @@ export async function loadUkvClouds(baseUrl: string): Promise<UkvCloudData> {
   return { meta, volume, fields };
 }
 
+/** Frames averaged before a still view counts as converged and the clouds stop being marched. */
+const MAX_FRAMES = 32;
+
+function nearlyEqual(a: THREE.Matrix4, b: THREE.Matrix4): boolean {
+  for (let i = 0; i < 16; i++) {
+    if (Math.abs(a.elements[i] - b.elements[i]) > 1e-6 * Math.max(1, Math.abs(b.elements[i]))) return false;
+  }
+  return true;
+}
+
 function terrainTexture(heightmap: Heightmap): THREE.DataTexture {
   const { width, height } = heightmap.meta;
   const half = new Uint16Array(width * height);
@@ -138,7 +148,8 @@ export function createCloudLayer(
       uCamForward: { value: new THREE.Vector3() },
       uFar: { value: camera.far },
       uFrame: { value: 0 },
-      uSteps: { value: options.steps ?? 192 },
+      uTexel: { value: new THREE.Vector2() },
+      uSteps: { value: options.steps ?? 160 },
       uGridWest: { value: new THREE.Vector2(grid.x_west, grid.y_north) },
       uGridSize: { value: new THREE.Vector2(grid.width, grid.height) },
       uGridDx: { value: grid.dx },
@@ -151,7 +162,7 @@ export function createCloudLayer(
       uYTop: { value: 0 },
       uSunDir: { value: sunDirection },
       uSunRadiance: { value: new THREE.Color(1, 0.95, 0.88).multiplyScalar(30) },
-      uAmbientTop: { value: new THREE.Color(0.42, 0.56, 0.8) },
+      uAmbientTop: { value: new THREE.Color(0.48, 0.57, 0.72) },
       uAmbientBottom: { value: new THREE.Color(0.2, 0.22, 0.25) },
       uFogColor: { value: fogColor },
       uFogRange: { value: fogRange },
@@ -225,6 +236,7 @@ export function createCloudLayer(
       const w = Math.max(1, Math.round(size.x * resolution));
       const h = Math.max(1, Math.round(size.y * resolution));
       for (const target of [cloudTarget, history, accumulated]) target.setSize(w, h);
+      cloudMaterial.uniforms.uTexel.value.set(1 / w, 1 / h);
       frames = 0;
     },
     render() {
@@ -234,7 +246,8 @@ export function createCloudLayer(
         return;
       }
       camera.updateMatrixWorld();
-      if (!camera.matrixWorld.equals(lastView) || !camera.projectionMatrix.equals(lastProjection)) {
+      // MapControls can jitter the camera by one float ULP every frame at its angle limit, so compare loosely.
+      if (!nearlyEqual(camera.matrixWorld, lastView) || !nearlyEqual(camera.projectionMatrix, lastProjection)) {
         lastView.copy(camera.matrixWorld);
         lastProjection.copy(camera.projectionMatrix);
         frames = 0;
@@ -242,6 +255,13 @@ export function createCloudLayer(
 
       renderer.setRenderTarget(sceneTarget);
       renderer.render(scene, camera);
+      if (frames >= MAX_FRAMES) {
+        // Converged: keep compositing the scene (the sea animates) with the finished clouds.
+        quad.material = compositeMaterial;
+        renderer.setRenderTarget(null);
+        renderer.render(quadScene, quadCamera);
+        return;
+      }
 
       const u = cloudMaterial.uniforms;
       u.uInvProj.value.copy(camera.projectionMatrixInverse);
@@ -275,7 +295,7 @@ export function createCloudLayer(
       quad.material = compositeMaterial;
       renderer.setRenderTarget(null);
       renderer.render(quadScene, quadCamera);
-      frames = Math.min(frames + 1, 32);
+      frames = Math.min(frames + 1, MAX_FRAMES);
     },
   };
   layer.resize();
