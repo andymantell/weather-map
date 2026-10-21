@@ -3,7 +3,7 @@
 The map used to be locked to an orbit high above the UK. The camera now has two modes and a flight between them:
 
 - **Map mode** is the old orbiting view (MapControls), now allowed down to 300 m above the ground, with zoom towards the cursor.
-- **Ground mode** is a first person view that holds a height above the ground or sea, from 1.7 m (standing) up to 8 km (a drone or light aircraft).
+- **Ground mode** is a first person view that holds a height above the ground or sea, from 50 m (just above the rooftops) up to 8 km (a light aircraft). Andy found full eye level too low, so 50 m is the floor and where a dive ends.
 - **The dive.** Double-clicking the map, or pressing **Drop to ground**, flies the camera down through the cloud layer to stand at that spot. **Esc** or **Back to map** climbs back out.
 
 Code is in `src/camera/`. `main.ts` only creates the rig and calls `rig.update(dt)` each frame.
@@ -16,12 +16,12 @@ Code is in `src/camera/`. `main.ts` only creates the rig and calls `rig.update(d
 | Map | Double-click | Dive to that point |
 | Ground | Drag | Look around |
 | Ground | WASD or arrow keys | Move (Shift = 5× faster) |
-| Ground | Scroll, or Q/E | Sink and rise (proportional, 1.7 m to 8 km) |
+| Ground | Scroll, or Q/E | Sink and rise (proportional, 50 m to 8 km) |
 | Ground | Double-click | Hop to that point in an arc |
 | Ground | Esc | Climb back to the map |
 | Both | H | Hide or show the control panel |
 
-Walking speed scales with height (30 m/s on foot, 1.5 × height per second above that). That is far faster than a real walk, because the terrain is a 2 km mesh and walking pace would feel frozen.
+Speed scales with height, at 1.5 × height per second (75 m/s at 50 m).
 
 ## How it works
 
@@ -36,23 +36,25 @@ Walking speed scales with height (30 m/s on foot, 1.5 × height per second above
 
 The flight path is a cubic Bezier. It leaves along the current view direction and arrives down a 30° glide slope on the final heading. Mid-flight the camera looks along the direction of travel, so it looks down into the cloud deck as it dives and levels out to the horizon over the last few hundred metres.
 
-A Bezier traversed at constant speed would spend the whole flight up high and hit the ground in one frame. The flight is paced instead so that **speed is proportional to height above ground** (plus 1.5 km). Time per segment is `length / (height + 1.5 km)`, so each halving of height takes about the same time. In practice it crosses hundreds of km in the first second, slows through the clouds, and glides in over the last kilometre. A full dive from the opening view takes about 8 s (capped at 9 s), with smoothstep ease-in and ease-out in time. The field of view widens from 45° on the map to 60° at ground level during the flight.
+A Bezier traversed at constant speed would spend the whole flight up high and hit the ground in one frame. The flight is paced instead so that **speed is proportional to height above ground** (plus 1.5 km). Time per segment is `length / (height + 1.5 km)`, so each halving of height takes about the same time. In practice it crosses hundreds of km in the first second, slows through the clouds, and glides in over the last kilometre to 50 m. A full dive from the opening view takes about 8 s (capped at 9 s), with smoothstep ease-in and ease-out in time. The field of view widens from 45° on the map to 60° at ground level during the flight.
 
 The camera is kept above the ground all the way down by clamping to the terrain height plus a clearance.
 
 ### Ground height
 
-`GroundSampler` reads the terrain mesh's own vertex grid and uses the same triangle split, times `mesh.scale.y`. That way, ground height is exactly the surface on screen at any vertical exaggeration, and changing the exaggeration slider while standing keeps you at the same height above ground. The sea surface (Y = 0) counts as ground. Ray hits for double-click march along the ray with steps that shrink near the ground, then bisect.
+`GroundSampler` reads the terrain mesh's own vertex grid and uses the same triangle split, times `mesh.scale.y`. That way, ground height is exactly the surface on screen at any vertical exaggeration, and changing the exaggeration slider in ground mode keeps you at the same height above ground. The sea surface (Y = 0) counts as ground. Ray hits for double-click march along the ray with steps that shrink near the ground, then bisect.
 
 ### Near plane and depth precision
 
-The renderer already uses a logarithmic depth buffer, so precision holds from metres to thousands of km with one far plane (20,000 km). Only the near plane needs to move: it is set to a quarter of the height above ground, clamped between 0.3 m and 100 m. Standing on the Hoe it is about 0.4 m, and on the UK overview it is 100 m. The cloud pass reconstructs distance from log depth using only the far plane, so it is unaffected.
+The renderer already uses a logarithmic depth buffer, so precision holds from metres to thousands of km with one far plane (20,000 km). Only the near plane needs to move: it is set to a quarter of the height above ground, clamped between 0.3 m and 100 m. At 50 m it is about 12 m, and on the UK overview it is 100 m. The cloud pass reconstructs distance from log depth using only the far plane, so it is unaffected.
 
 ### Haze
 
 The map's linear fog (600 to 2,600 km) is far too thin at ground level, where distant hills should fade into haze. The rig blends the fog distances geometrically with log height, from the map values above about 300 km to 4 to 140 km below about 200 m. The cloud pass reads `scene.fog` each frame, so the clouds' aerial perspective follows.
 
 ## Screenshots
+
+These were taken before the floor was raised to 50 m, so the dive's last frame and the eye level views are at 1.7 m.
 
 All shots were taken on Andy's machine (Radeon RX 7700S, Chrome, ANGLE/D3D11) at 1600×900, with the default settings: 4× exaggeration, 3× cloud height and stylised waves.
 
@@ -94,7 +96,7 @@ In dev builds, `window.rig`, `window.projection`, `window.camera` and `window.cl
 
 ```js
 const p = projection.toWorld(-4.1424, 50.3647); // Plymouth Hoe
-rig.toGround({ x: p.x, y: 0, z: p.z }, { heading: Math.PI, height: 0.0017, instant: true }); // facing south
+rig.toGround({ x: p.x, y: 0, z: p.z }, { heading: Math.PI, height: 0.05, instant: true }); // facing south
 clouds.invalidate(); // drop cloud history after cutting the camera
 rig.toMap();
 ```

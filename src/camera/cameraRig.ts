@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { Flight, type CameraPose } from './flight';
-import { EYE_HEIGHT, GroundControls } from './groundControls';
+import { MIN_HEIGHT, GroundControls } from './groundControls';
 import { GroundSampler } from './groundSampler';
 
 export type CameraMode = 'map' | 'flying' | 'ground';
@@ -87,7 +87,7 @@ export class CameraRig {
     const forward = this.camera.getWorldDirection(new THREE.Vector3());
     // Yaw turns anticlockwise seen from above, so it is minus the bearing.
     const heading = options.heading !== undefined ? -options.heading : Math.atan2(-forward.x, -forward.z);
-    const height = options.height ?? EYE_HEIGHT;
+    const height = options.height ?? MIN_HEIGHT;
     const eye = new THREE.Vector3(point.x, this.sampler.heightAt(point.x, point.z) + height, point.z);
     const end: CameraPose = {
       position: eye,
@@ -196,7 +196,7 @@ export class CameraRig {
     const p = this.camera.position;
     const above = Math.max(p.y - this.sampler.heightAt(p.x, p.z), 1e-4);
     // The logarithmic depth buffer keeps precision over a huge range, so the near plane only needs to stay in front
-    // of the ground under the camera: half a metre when standing, 100 m when looking at the whole UK.
+    // of the ground under the camera: about 12 m at the lowest ground view, 100 m when looking at the whole UK.
     const near = THREE.MathUtils.clamp(above * 0.25, 0.0003, 0.1);
     if (Math.abs(near - this.camera.near) > this.camera.near * 0.05) {
       this.camera.near = near;

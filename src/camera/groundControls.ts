@@ -1,19 +1,19 @@
 import * as THREE from 'three';
 import type { GroundSampler } from './groundSampler';
 
-/** Eye height of someone standing (km). */
-export const EYE_HEIGHT = 0.0017;
+/** Lowest the ground view goes, and where a dive ends (km). Lower than this the coarse terrain looks bare. */
+export const MIN_HEIGHT = 0.05;
 const MAX_HEIGHT = 8;
 
 /**
- * First person controls that hold a height above the ground, like a walker or a drone: drag to look, WASD or the
- * arrow keys to move, the wheel or Q/E to rise and sink, Shift to go faster. Speed scales with height so walking
- * down a street and skimming over the Pennines both feel right.
+ * First person controls that hold a height above the ground, like a drone: drag to look, WASD or the
+ * arrow keys to move, the wheel or Q/E to rise and sink, Shift to go faster. Speed scales with height so cruising
+ * over a town and skimming over the Pennines both feel right.
  */
 export class GroundControls {
   enabled = false;
-  /** Height of the eye above the ground or sea (km). */
-  height = EYE_HEIGHT;
+  /** Height of the camera above the ground or sea (km). */
+  height = MIN_HEIGHT;
   yaw = 0;
   pitch = 0;
 
@@ -21,7 +21,7 @@ export class GroundControls {
   private readonly velocity = new THREE.Vector2();
   private dragging = false;
   private lastPointer = new THREE.Vector2();
-  private targetHeight = EYE_HEIGHT;
+  private targetHeight = MIN_HEIGHT;
 
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -44,7 +44,7 @@ export class GroundControls {
     this.yaw = Math.atan2(-forward.x, -forward.z);
     this.pitch = Math.asin(THREE.MathUtils.clamp(forward.y, -1, 1));
     const p = this.camera.position;
-    this.height = this.targetHeight = Math.max(p.y - this.ground.heightAt(p.x, p.z), EYE_HEIGHT);
+    this.height = this.targetHeight = Math.max(p.y - this.ground.heightAt(p.x, p.z), MIN_HEIGHT);
     this.velocity.set(0, 0);
     this.enabled = true;
   }
@@ -58,19 +58,19 @@ export class GroundControls {
     if (!this.enabled) return;
     const fast = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') ? 5 : 1;
 
-    // Climb and sink proportionally, so one key press means the same at 2 m and at 2 km.
+    // Climb and sink proportionally, so one key press means the same at 50 m and at 5 km.
     const climb = (this.keys.has('KeyE') || this.keys.has('PageUp') ? 1 : 0) -
       (this.keys.has('KeyQ') || this.keys.has('PageDown') ? 1 : 0);
     if (climb) this.targetHeight *= Math.exp(climb * 1.2 * fast * dt);
-    this.targetHeight = THREE.MathUtils.clamp(this.targetHeight, EYE_HEIGHT, MAX_HEIGHT);
+    this.targetHeight = THREE.MathUtils.clamp(this.targetHeight, MIN_HEIGHT, MAX_HEIGHT);
     this.height = THREE.MathUtils.damp(this.height, this.targetHeight, 6, dt);
 
     const forward = (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
       (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
     const strafe = (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) -
       (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
-    // km/s: a brisk 30 m/s on foot (the terrain is coarse), rising with height.
-    const speed = Math.max(0.03, this.height * 1.5) * fast;
+    // km/s, rising with height: 75 m/s at the lowest height (the terrain is coarse).
+    const speed = this.height * 1.5 * fast;
     const wish = new THREE.Vector2(strafe, -forward);
     if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(speed);
     wish.rotateAround(new THREE.Vector2(), -this.yaw);
@@ -109,7 +109,7 @@ export class GroundControls {
   private onWheel = (event: WheelEvent) => {
     if (!this.enabled) return;
     event.preventDefault();
-    this.targetHeight = THREE.MathUtils.clamp(this.targetHeight * Math.exp(event.deltaY * 0.0015), EYE_HEIGHT, MAX_HEIGHT);
+    this.targetHeight = THREE.MathUtils.clamp(this.targetHeight * Math.exp(event.deltaY * 0.0015), MIN_HEIGHT, MAX_HEIGHT);
   };
 
   private onKeyDown = (event: KeyboardEvent) => {
