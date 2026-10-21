@@ -4,7 +4,7 @@ The map used to be locked to an orbit high above the UK. The camera now has two 
 
 - **Map mode** is the old orbiting view (MapControls), now allowed down to 300 m above the ground, with zoom towards the cursor.
 - **Ground mode** is a first person view that holds a height above the ground or sea, from 50 m (just above the rooftops) up to 8 km (a light aircraft). Andy found full eye level too low, so 50 m is the floor and where a dive ends.
-- **The dive.** Double-clicking the map, or pressing **Drop to ground**, flies the camera down through the cloud layer to stand at that spot. **Esc** or **Back to map** climbs back out.
+- **The dive.** Double-clicking the map, or pressing **Drop to ground**, flies the camera down through the cloud layer to stand at that spot. **Esc** or **Back to map** climbs back out along the same path in reverse, looking at the ground the whole way, to the map view the dive started from (shifted by however far you moved on the ground).
 
 Code is in `src/camera/`. `main.ts` only creates the rig and calls `rig.update(dt)` each frame.
 
@@ -39,6 +39,8 @@ The flight path is a cubic Bezier. It leaves along the current view direction an
 A Bezier traversed at constant speed would spend the whole flight up high and hit the ground in one frame. The flight is paced instead so that **speed is proportional to height above ground** (plus 1.5 km). Time per segment is `length / (height + 1.5 km)`, so each halving of height takes about the same time. In practice it crosses hundreds of km in the first second, slows through the clouds, and glides in over the last kilometre to 50 m. A full dive from the opening view takes about 8 s (capped at 9 s), with smoothstep ease-in and ease-out in time. The field of view widens from 45° on the map to 60° at ground level during the flight.
 
 The camera is kept above the ground all the way down by clamping to the terrain height plus a clearance.
+
+The climb back is built as a dive from the map view to the camera's current position, then played backwards, so it mirrors the way down exactly (Andy asked for this after the first version turned to face the direction of travel on the way up).
 
 ### Ground height
 

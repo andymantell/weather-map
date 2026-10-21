@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
-import { Flight, type CameraPose } from './flight';
+import { Flight, type CameraPose, type FlightOptions } from './flight';
 import { MIN_HEIGHT, GroundControls } from './groundControls';
 import { GroundSampler } from './groundSampler';
 
@@ -34,6 +34,8 @@ export class CameraRig {
   readonly sampler: GroundSampler;
   private flight?: Flight;
   private afterFlight: CameraMode = 'map';
+  /** Where the last dive left the map from and where it landed, so the climb back can retrace it. */
+  private lastDive?: { from: CameraPose; target: THREE.Vector3; landing: THREE.Vector3 };
   private readonly listeners = new Set<(mode: CameraMode) => void>();
   private readonly baseFog?: { near: number; far: number };
 
@@ -95,41 +97,59 @@ export class CameraRig {
       quaternion: GroundControls.orientation(heading, -0.04),
       fov: GROUND_FOV,
     };
-    const horizontal = new THREE.Vector3(-Math.sin(heading), 0, -Math.cos(heading));
-    const distance = this.camera.position.distanceTo(eye);
-    const approach = THREE.MathUtils.clamp(distance * 0.08, 1, 25);
-    this.fly(end, 'ground', options.instant, {
-      departure: forward,
-      departureLength: distance * 0.3,
-      // Come in down a 30 degree slope, levelling out as the view settles.
-      arrival: horizontal.clone().add(new THREE.Vector3(0, -0.6, 0)),
-      arrivalLength: approach,
-      clearance: Math.min(height, 0.05),
-    });
+    const flightOptions = this.diveOptions(this.camera.position, forward, eye, heading, height);
+    if (this.mode === 'map') {
+      this.lastDive = {
+        from: { position: this.camera.position.clone(), quaternion: this.camera.quaternion.clone(), fov: this.camera.fov },
+        target: this.map.target.clone(),
+        landing: eye.clone(),
+      };
+    }
+    this.fly(end, 'ground', options.instant, flightOptions);
   }
 
-  /** Climbs from the ground back to a map view over where the camera is. */
+  /** The path of a dive from a map view to an eye position on the ground. */
+  private diveOptions(from: THREE.Vector3, forward: THREE.Vector3, eye: THREE.Vector3, heading: number, height: number): FlightOptions {
+    const horizontal = new THREE.Vector3(-Math.sin(heading), 0, -Math.cos(heading));
+    const distance = from.distanceTo(eye);
+    return {
+      departure: forward.clone(),
+      departureLength: distance * 0.3,
+      // Come in down a 30 degree slope, levelling out as the view settles.
+      arrival: horizontal.add(new THREE.Vector3(0, -0.6, 0)),
+      arrivalLength: THREE.MathUtils.clamp(distance * 0.08, 1, 25),
+      clearance: Math.min(height, 0.05),
+    };
+  }
+
+  /**
+   * Climbs from the ground back to the map: a dive from the map view to here, played backwards, so the camera looks
+   * at the ground the whole way up. The map view is the one the last dive left from, shifted by however far the
+   * camera has moved since landing, or a view over the camera if there was no dive.
+   */
   toMap(options: { instant?: boolean } = {}): void {
     const p = this.camera.position;
     const forward = this.camera.getWorldDirection(new THREE.Vector3());
-    const horizontal = new THREE.Vector3(forward.x, 0, forward.z);
-    if (horizontal.lengthSq() < 1e-6) horizontal.set(0, 0, -1);
-    horizontal.normalize();
-    const target = new THREE.Vector3(p.x, 0, p.z).addScaledVector(horizontal, 25);
-    target.y = this.sampler.heightAt(target.x, target.z);
-    const position = target.clone().addScaledVector(horizontal, -75).setY(target.y + 60);
-    const quaternion = new THREE.Quaternion().setFromRotationMatrix(
-      new THREE.Matrix4().lookAt(position, target, new THREE.Vector3(0, 1, 0)),
-    );
-    const end: CameraPose = { position, quaternion, fov: MAP_FOV };
-    const view = target.clone().sub(position).normalize();
-    this.fly(end, 'map', options.instant, {
-      departure: horizontal.clone().add(new THREE.Vector3(0, 0.8, 0)),
-      departureLength: 8,
-      arrival: view,
-      arrivalLength: position.distanceTo(p) * 0.3,
-      clearance: 0.05,
-    });
+    const heading = Math.atan2(-forward.x, -forward.z);
+    let end: CameraPose;
+    let target: THREE.Vector3;
+    if (this.lastDive) {
+      const { from, landing } = this.lastDive;
+      const offset = new THREE.Vector3(p.x - landing.x, 0, p.z - landing.z);
+      end = { position: from.position.clone().add(offset), quaternion: from.quaternion.clone(), fov: from.fov };
+      target = this.lastDive.target.clone().add(offset);
+    } else {
+      const horizontal = new THREE.Vector3(-Math.sin(heading), 0, -Math.cos(heading));
+      target = new THREE.Vector3(p.x, 0, p.z).addScaledVector(horizontal, 25);
+      target.y = this.sampler.heightAt(target.x, target.z);
+      const position = target.clone().addScaledVector(horizontal, -75).setY(target.y + 60);
+      const quaternion = new THREE.Quaternion().setFromRotationMatrix(
+        new THREE.Matrix4().lookAt(position, target, new THREE.Vector3(0, 1, 0)),
+      );
+      end = { position, quaternion, fov: MAP_FOV };
+    }
+    const mapForward = new THREE.Vector3(0, 0, -1).applyQuaternion(end.quaternion);
+    this.fly(end, 'map', options.instant, this.diveOptions(end.position, mapForward, p, heading, this.ground.height), true);
     this.map.target.copy(target);
   }
 
@@ -158,7 +178,8 @@ export class CameraRig {
     });
   }
 
-  private fly(end: CameraPose, then: CameraMode, instant: boolean | undefined, options: ConstructorParameters<typeof Flight>[3]): void {
+  /** Flies from the current view to `end`; reversed builds the path from `end` to here and plays it backwards. */
+  private fly(end: CameraPose, then: CameraMode, instant: boolean | undefined, options: FlightOptions, reversed = false): void {
     const start: CameraPose = {
       position: this.camera.position.clone(),
       quaternion: this.camera.quaternion.clone(),
@@ -167,7 +188,9 @@ export class CameraRig {
     this.map.enabled = false;
     this.ground.enabled = false;
     this.afterFlight = then;
-    this.flight = new Flight(start, end, this.sampler, options);
+    this.flight = reversed
+      ? new Flight(end, start, this.sampler, options, true)
+      : new Flight(start, end, this.sampler, options);
     this.setMode('flying');
     if (instant) {
       this.flight.update(this.camera, this.flight.duration);

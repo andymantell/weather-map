@@ -44,6 +44,8 @@ export class Flight {
     to: CameraPose,
     private readonly ground: GroundSampler,
     private readonly options: FlightOptions,
+    /** Plays the flight backwards, from `to` to `from`, so a climb can retrace a dive exactly. */
+    private readonly reversed = false,
   ) {
     this.from = { position: from.position.clone(), quaternion: from.quaternion.clone(), fov: from.fov };
     this.to = { position: to.position.clone(), quaternion: to.quaternion.clone(), fov: to.fov };
@@ -78,14 +80,14 @@ export class Flight {
   /** Advances the flight and poses the camera. */
   update(camera: THREE.PerspectiveCamera, dt: number): void {
     this.elapsed = Math.min(this.elapsed + dt, this.duration);
-    const u = this.elapsed / this.duration;
+    const u = this.reversed ? 1 - this.elapsed / this.duration : this.elapsed / this.duration;
     // Ease in and out in time, then spend that time according to the pace table.
     const eased = u * u * (3 - 2 * u);
     const s = this.curveParameter(eased);
 
     const p = this.curve.getPoint(s);
     const floor = this.ground.heightAt(p.x, p.z) + this.options.clearance;
-    if (s < 1) p.y = Math.max(p.y, floor);
+    if (s > 0 && s < 1) p.y = Math.max(p.y, floor);
     camera.position.copy(p);
 
     // Look where we're going, blending from the start view and into the end view.
