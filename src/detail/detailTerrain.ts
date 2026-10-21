@@ -51,6 +51,7 @@ interface Tile {
   area: Area;
   group: THREE.Group;
   ground: THREE.Mesh;
+  groundUniforms: { roadRibbons: { value: number } };
   skirt: THREE.Mesh;
   uniforms: ScaledUniforms;
   /** World rectangle in km: xMin, zMin, xMax, zMax. */
@@ -157,6 +158,7 @@ async function createTile(baseUrl: string, name: string, coarse: GroundSampler, 
     area,
     group,
     ground: g.mesh,
+    groundUniforms: g.uniforms,
     skirt,
     uniforms,
     rect: new THREE.Vector4(meta.xMin / 1000, -meta.yMax / 1000, meta.xMax / 1000, -meta.yMin / 1000),
@@ -252,6 +254,7 @@ export async function createDetailTerrain(
         t.group.add(t.roads);
       }
       if (t.roads) t.roads.visible = view < ROADS_WITHIN;
+      t.groundUniforms.roadRibbons.value = t.roads?.visible ? 1 : 0;
       t.fineBlocks!.visible = view >= FOOTPRINTS_WITHIN && view < FINE_BLOCKS_WITHIN;
       t.coarseBlocks!.visible = view >= FINE_BLOCKS_WITHIN;
       const e = THREE.MathUtils.clamp(Math.log(Math.max(view, 0.3) / 0.3) / Math.log(30 / 0.3), 0, 1);

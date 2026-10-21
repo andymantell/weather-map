@@ -118,6 +118,8 @@ uniform float fieldSize;
 uniform sampler2D imageryTex;
 uniform vec2 imagerySize;
 uniform float useImagery;
+/** 1 while the road ribbons are drawn, so the cover raster's own roads step aside. */
+uniform float roadRibbons;
 varying vec2 vLocal;
 varying float vHeight;
 /** Surface relief (m) for bump shading, set by surfaceColour. */
@@ -191,6 +193,9 @@ vec3 surfaceColour(vec2 p, out float rough) {
   // Warp the lookup so class edges are organic rather than texel steps.
   vec2 warp = vec2(vnoise(p / 7.0), vnoise(p / 7.0 + 13.7)) - 0.5;
   int k = coverClass(p + warp * coverTexel * 1.6);
+  // Under ribbons the raster's roads would poke out in steps past the ribbon edges: draw the
+  // verge there instead (the satellite colour, or fields where there is none).
+  if (roadRibbons > 0.5 && (k == 12 || k == 13 || k == 16)) k = 1;
   vec3 c = proceduralColour(p, k, rough);
   bool natural = (k >= 1 && k <= 8) || k == 14;
   if (useImagery < 0.5 || !natural) return c;
@@ -253,7 +258,7 @@ export interface Ground {
   mesh: THREE.Mesh;
   /** Shared with the surroundings so both get the same surface treatment. */
   material: THREE.MeshStandardMaterial;
-  uniforms: { fieldSize: { value: number } };
+  uniforms: { fieldSize: { value: number }; roadRibbons: { value: number } };
 }
 
 /** The area's satellite image as a texture, kept in sRGB values like the shader's colours. */
@@ -320,6 +325,7 @@ export function createGround(area: Area): Ground {
       ),
     },
     useImagery: { value: area.imagery ? 1 : 0 },
+    roadRibbons: { value: 0 },
   };
 
   const material = new THREE.MeshStandardMaterial({ roughness: 0.95, metalness: 0 });
