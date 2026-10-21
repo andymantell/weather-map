@@ -51,5 +51,9 @@
   "boundaries": {
     "hedgeKm": 547.3,
     "wallKm": 15.9
+  },
+  "roads": {
+    "pieces": 31883,
+    "km": 2844.4
   }
 }
