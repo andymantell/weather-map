@@ -19,7 +19,8 @@ uniform vec4 uTerrainBox;
 uniform vec2 uTerrainSize;
 uniform float uExaggeration;
 uniform float uCloudScale;
-uniform float uTime;
+uniform float uRainClock;  // seconds of fall, sped up by uLapse (integrated on the CPU so a change does not jump)
+uniform float uLapse;      // time-lapse factor: near real time at the ground, faster from higher up
 uniform vec2 uWind;          // horizontal drift per unit of fall
 uniform float uStrength;
 
@@ -51,7 +52,8 @@ struct Column {
   float rate;     // mm/h at the surface
   float ground;   // world y
   float top;      // world y where drops appear
-  float period;   // seconds for a drop to fall the whole column
+  float depth;    // km from where drops appear down to the ground, before any vertical scaling
+  float speed;    // fall speed, m/s
   float convective;
 };
 
@@ -62,7 +64,7 @@ float fallSpeed(float rate) {
 }
 
 Column columnAt(vec2 xz) {
-  Column c = Column(0.0, 0.0, 0.0, 1.0, 0.0);
+  Column c = Column(0.0, 0.0, 0.0, 1.0, 1.0, 0.0);
   vec2 laea = vec2(xz.x, -xz.y) * 1000.0;
   vec2 uv = gridUv(laea);
   if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return c;
@@ -78,8 +80,8 @@ Column columnAt(vec2 xz) {
   float top = base + mix(0.8, 2.5, c.convective);
   c.ground = groundKm(laea) * uExaggeration;
   c.top = c.ground + top * uCloudScale;
-  // Time-lapse: about 2 s to fall the column at 1 mm/h, faster for the bigger drops of heavy rain.
-  c.period = 2.0 * fallSpeed(1.0) / fallSpeed(c.rate);
+  c.depth = top;
+  c.speed = fallSpeed(c.rate);
   return c;
 }
 
@@ -123,26 +125,38 @@ void main() {
   vec3 cam = cameraPosition;
   vec2 xz = cam.xz + (fract(seed.xy - cam.xz / uTile + 0.5) - 0.5) * uTile;
   Column c = columnAt(xz);
+  float height = c.top - c.ground;
+  vec3 fall = normalize(vec3(uWind.x, -1.0, uWind.y));
+  float fallen;
+  vec3 head;
+  if (height > uTile) {
+    // Near tiers: drops wrap in a box around the camera vertically too, so close rain is dense instead of
+    // spread through the whole column. They fall in world units, from a clock in unscaled km.
+    float y0 = seed.z * uTile - uRainClock * c.speed * 0.001 * uCloudScale;
+    float y = cam.y + (fract((y0 - cam.y) / uTile + 0.5) - 0.5) * uTile;
+    fallen = (c.top - y) / height;
+    // No wind drift here: it would carry the drops out of the box around the camera.
+    head = vec3(xz.x, y, xz.y);
+  } else {
+    // Phase in the unscaled column, so the height sliders and relief easing move drops without scrambling them.
+    fallen = fract(seed.z + uRainClock * c.speed * 0.001 / c.depth);
+    head = vec3(xz.x, c.top, xz.y) + fall * (fallen * height / -fall.y);
+  }
   // Count-based LOD: a hat in log distance, summing to 1 over tiers spaced by 3x.
-  float camDist = length(vec3(xz.x, 0.5 * (c.top + c.ground), xz.y) - cam);
-  float lod = max(0.0, 1.0 - abs(log(camDist / uDist) / log(3.0)));
-  if (uFirst > 0.0 && camDist < uDist) lod = 1.0;
+  float dist = length(head - cam);
+  float lod = max(0.0, 1.0 - abs(log(dist / uDist) / log(3.0)));
+  if (uFirst > 0.0 && dist < uDist) lod = 1.0;
   // Heavier rain: more drops, from about a fifth of the maximum in drizzle to all of them in a downpour.
   float density = smoothstep(0.02, 0.15, c.rate) * clamp(0.18 + 0.27 * log2(1.0 + c.rate), 0.0, 1.0);
   float keep = density * lod - seed.w;
-  if (keep <= 0.0 || c.top <= c.ground) {
+  if (keep <= 0.0 || height <= 0.0 || fallen < 0.0 || fallen > 1.0) {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     return;
   }
 
-  float height = c.top - c.ground;
-  float fallen = fract(seed.z + uTime / c.period);
-  vec3 fall = normalize(vec3(uWind.x, -1.0, uWind.y));
-  vec3 head = vec3(xz.x, c.top, xz.y) + fall * (fallen * height / -fall.y);
   // Motion-blur length: the distance fallen in a short exposure, at least a few pixels.
-  float speed = height / c.period;
+  float speed = c.speed * 0.001 * uLapse * uCloudScale;  // km/s on the map
   float heavy = smoothstep(0.5, 16.0, c.rate);
-  float dist = length(head - cam);
   float len = max(speed * mix(0.05, 0.11, heavy), dist * uPixel * mix(6.0, 14.0, heavy));
   float width = dist * uPixel * mix(1.3, 2.2, heavy);
 
@@ -229,15 +243,15 @@ void main() {
   vCorner = vec2(corner.x, y);
   vSide = height * cosE / len;
   // Texture in km on the sprite, scrolling at the rain's projected fall speed.
-  vTex = vec2(corner.x * w * 0.5 + seed.w * 97.0, y * len * 0.5 - uTime * height * cosE / c.period);
+  vTex = vec2(corner.x * w * 0.5 + seed.w * 97.0, y * len * 0.5 - uRainClock * c.speed * 0.001 / c.depth * height * cosE);
   // Shipley et al. (1974) extinction, sigma = 0.16 R^0.74 per km, along a fixed path so overlapping tiers of
   // different sprite sizes add up to about the same haze: 4 km across a shaft, the column depth looking down.
   float path = mix(height / uCloudScale, 4.0, cosE);
   float opacity = 1.0 - exp(-0.16 * pow(c.rate, 0.74) * path);
   // Far curtains stand in for many drops; near ones only add mist.
   float near = smoothstep(10.0, 60.0, camDist);
-  vAlpha = lod * opacity * mix(0.08, 1.0, near) * uStrength;
-  vDark = smoothstep(0.5, 16.0, c.rate);
+  vAlpha = min(lod * opacity * mix(0.08, 1.5, near) * uStrength, 0.9);
+  vDark = smoothstep(0.3, 8.0, c.rate);
 }
 `;
 
@@ -265,7 +279,7 @@ void main() {
   float a = vAlpha * across * alongFade * streaks * occlusion(vW);
   if (a < 0.002) discard;
   // Light rain is a pale blue-grey haze, heavy rain a dark grey curtain.
-  vec3 color = mix(vec3(0.6, 0.66, 0.74), vec3(0.22, 0.25, 0.3), vDark);
+  vec3 color = mix(vec3(0.52, 0.58, 0.68), vec3(0.22, 0.25, 0.3), vDark);
   outColor = vec4(color, a);
 }
 `;

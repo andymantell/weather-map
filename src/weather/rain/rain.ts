@@ -10,7 +10,7 @@ interface Tier {
 }
 
 // Tiers are spaced by 3x in distance, matching the hat weights in the shaders.
-const STREAK_TIERS: Tier[] = [2, 6, 18, 54, 162].map((dist) => ({ dist, count: 60000 }));
+const STREAK_TIERS: Tier[] = [0.02, 0.06, 0.2, 0.6, 2, 6, 18, 54, 162].map((dist) => ({ dist, count: 60000 }));
 const VEIL_TIERS: Tier[] = [30, 90, 270, 810].map((dist) => ({ dist, count: 40000 }));
 // A wrap box never needs to be bigger than the data (about 1100 x 1400 km) seen from anywhere over it.
 const MAX_TILE = 2200;
@@ -58,6 +58,8 @@ export function createRainLayer(
   clouds: CloudLayer,
   data: UkvCloudData,
   heightmap: Heightmap,
+  /** Ground height (world y, km) under a point, for how fast to run the rain; defaults to the coarse heightmap. */
+  groundAt?: (x: number, z: number) => number,
 ): RainLayer {
   const { grid } = data.meta;
   const hm = heightmap.meta;
@@ -72,7 +74,8 @@ export function createRainLayer(
     uTerrainSize: { value: new THREE.Vector2(hm.width, hm.height) },
     uExaggeration: { value: 1 },
     uCloudScale: { value: 3 },
-    uTime: { value: 0 },
+    uRainClock: { value: 0 },
+    uLapse: { value: 1 },
     // Drift with a south-westerly wind, as fronts usually come in over the UK.
     uWind: { value: new THREE.Vector2(0.18, -0.12) },
     uStrength: { value: 1 },
@@ -114,7 +117,14 @@ export function createRainLayer(
   VEIL_TIERS.forEach((t, i) => addTier(t, i, 'veil'));
   STREAK_TIERS.forEach((t, i) => addTier(t, i, 'streak'));
 
-  const start = performance.now();
+  const coarseGround = (x: number, z: number) => {
+    const c = Math.round(((x * 1000 - hm.xMin) / (hm.xMax - hm.xMin)) * (hm.width - 1));
+    const r = Math.round(((hm.yMax + z * 1000) / (hm.yMax - hm.yMin)) * (hm.height - 1));
+    if (c < 0 || r < 0 || c >= hm.width || r >= hm.height) return 0;
+    return (Math.max(heightmap.heights[r * hm.width + c], 0) / 1000) * shared.uExaggeration.value;
+  };
+  const ground = groundAt ?? coarseGround;
+  let last = performance.now();
 
   const layer: RainLayer = {
     enabled: true,
@@ -128,7 +138,9 @@ export function createRainLayer(
       for (const mesh of scene.children) mesh.visible = mesh.renderOrder === 0 ? veils : streaks;
     },
     render() {
-      const elapsed = (performance.now() - start) / 1000;
+      const now = performance.now();
+      const dt = Math.min((now - last) / 1000, 0.1);
+      last = now;
       // The scene depth and the rain's column heights come from the cloud layer, so rain goes with it.
       if (!layer.enabled || !clouds.enabled) return;
       const overlay = clouds.overlay;
@@ -137,7 +149,10 @@ export function createRainLayer(
       shared.uCloudOpacity.value = overlay.opacity;
       shared.uCloudScale.value = overlay.cloudScale;
       shared.uExaggeration.value = overlay.exaggeration;
-      shared.uTime.value = elapsed;
+      // Near real time on the ground; sped up from higher views, where real drops would barely move.
+      const above = Math.max(camera.position.y - ground(camera.position.x, camera.position.z), 0.01);
+      shared.uLapse.value = THREE.MathUtils.clamp(80 * above, 2, 250);
+      shared.uRainClock.value += dt * shared.uLapse.value;
       shared.uFar.value = camera.far;
       renderer.getDrawingBufferSize(size);
       shared.uViewport.value.copy(size);

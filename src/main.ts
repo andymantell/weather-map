@@ -92,7 +92,7 @@ async function init() {
   rainInput.checked = rain.visible = false;
   clouds = createCloudLayer(renderer, scene, camera, cloudData, heightmap, sunDirection);
   mountCloudControls(document.getElementById('hud')!, clouds, cloudData.meta);
-  animatedRain = createRainLayer(renderer, camera, clouds, cloudData, heightmap);
+  animatedRain = createRainLayer(renderer, camera, clouds, cloudData, heightmap, (x, z) => rig!.sampler.heightAt(x, z));
   mountRainControls(document.getElementById('hud')!, animatedRain);
   const validTime = new Date(rainField.meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
   rainInfo.textContent = `UKV precipitation rate, valid ${validTime} UTC. ${rainField.meta.attribution}.`;
