@@ -7,7 +7,11 @@ hourly significant wave height, period and direction on a 1.5 km grid, split int
 swells, plus the 10 m wind it was driven by. That is enough to drive a spectral ocean shader, so the sea in the
 app now shows the real conditions: wave size, direction and length, sun glint, whitecaps and surf.
 
-![Live sea state over the UK, 21 Oct 2026 12:00 UTC](images/sea-overview-live.jpg)
+Real waves are far too small to see from the overview, so the default is **stylised waves**: the same data,
+blown up about 150 times and steepened so that relative roughness, wave size and direction read from the whole-UK
+view (Andy, 21 Oct 2026). A true-scale **realistic** mode is kept for close-ups.
+
+![Stylised sea state over the UK, 21 Oct 2026 12:00 UTC](images/sea-stylised-overview.jpg)
 
 ## Wave data sources
 
@@ -99,8 +103,9 @@ What the best real-time oceans do, and what fits a map that goes from 3,000 km a
 
 ## The proof of concept
 
-Code: [`src/sea/`](../src/sea/). It is on by default and the HUD has a **Live sea state** checkbox to compare with
-the old flat sea, and a **Wave size** slider.
+Code: [`src/sea/`](../src/sea/). It is on by default. The HUD's **Sea** menu picks stylised waves (the default),
+realistic waves at true scale, or the old flat sea. Stylised mode adds **Wave size** and **Wave steepness**
+sliders.
 
 The approach is a spectral sum of sines with Bruneton-style filtering, injected into Three.js's
 `MeshPhysicalMaterial`:
@@ -134,9 +139,32 @@ The approach is a spectral sum of sines with Bruneton-style filtering, injected 
    The surf zone is about 60 × Hs wide, from McCowan's breaking limit (H ≈ 0.78 × depth) on an assumed 1:50 beach.
    It fades to its average coverage when it's thinner than a pixel. Exposed coasts get more surf.
 
-**Wave size** scales the sea up by Froude scaling: lengths × N and periods × √N, so the slopes and the look of
-the sea stay the same but the waves read from further away. It is an exaggeration, like the terrain's vertical
-exaggeration.
+### Stylised mode (default)
+
+The first version offered a Froude-scaled wave size slider up to 60×. That keeps slopes, so the shading barely
+changes, and Andy found 60× not nearly enough to see waves from the overview. Stylised mode drops realism on
+purpose:
+
+- **Wave size**, 10× to 1,000× on a log slider, default 150×. A 12 s swell (about 225 m long) becomes about 34 km
+  between crests, roughly 30 pixels in the default overview.
+- **Wave steepness**, 1× to 12×, default 5×. This multiplies the slopes, so a 4 m sea shades much more strongly
+  than a 1 m sea. That is what shows relative roughness.
+- **Real periods**, sped up by 1.5×, instead of Froude scaling. That keeps the waves visibly moving from the
+  overview.
+- **Narrower directional spread** (s = 10 for wind sea, 40 for swell). The crests are longer, so their direction
+  reads at a glance.
+- **Crest and trough tint.** Crests are lightened and troughs darkened, so the waves read even away from the sun.
+- **Surf** is widened 8×, not 150×, so it stays a coastal fringe.
+
+Whitecap coverage still comes from the wind (Monahan), at 0.7× strength so it doesn't swamp the wave pattern.
+
+![Stylised waves over the Celtic Sea from about 130 km](images/sea-stylised-celtic-sea.jpg)
+
+### Realistic mode
+
+At true scale, waves are visible only within a few kilometres. Further out, the sea is shaped by the
+glint and whitecaps. The screenshots below show this mode. Its old wave size slider was replaced by the stylised
+mode.
 
 ### Screenshots
 
@@ -145,11 +173,11 @@ These were taken with the data valid 12:00 UTC 21 Oct 2026 and Chromium's softwa
 | | |
 | --- | --- |
 | ![Flat sea before](images/sea-overview-flat.jpg) | ![Live sea](images/sea-overview-live.jpg) |
-| Before: the old flat sea | After: the same view. Shallows show the seabed, and the wind sets the glint |
+| Before: the old flat sea | Realistic mode, same view. Shallows show the seabed, and the wind sets the glint |
 | ![Glint](images/sea-glint.jpg) | ![Coast](images/sea-coast.jpg) |
 | Looking towards the sun from 90 km over the Celtic Sea. The glint is wide because the wind is about 10 m/s | Off Cornwall from 12 km: whitecaps on the wind sea and surf along the coast |
 | ![Close up](images/sea-closeup.jpg) | ![Close up, wave size 15×](images/sea-closeup-x15.jpg) |
-| From 500 m off Land's End at true scale | The same view at wave size 15× |
+| From 500 m off Land's End at true scale | The same view with the old Froude-scaled wave size at 15× |
 
 ### Limits and next steps
 

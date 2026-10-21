@@ -11,9 +11,14 @@ import {
 } from './oceanShader';
 import { loadWaveField, type WaveField } from './waveField';
 
-/** cos^2s(Δθ/2) spreading exponents: broad wind sea, narrow swell. */
-const SPREAD_WIND_SEA = 4;
-const SPREAD_SWELL = 16;
+/** cos^2s(Δθ/2) spreading exponents [wind sea, swell]: broad wind sea, narrow swell. */
+const SPREAD_REALISTIC: [number, number] = [4, 16];
+/** Stylised waves are more long-crested, so their direction reads at a glance. */
+const SPREAD_STYLISED: [number, number] = [10, 40];
+
+/** Stylised defaults: waves ~150x real size and 5x steeper. */
+export const STYLISED_SIZE = 150;
+export const STYLISED_STEEPNESS = 5;
 
 /** Normalises cos^2s(θ/2) so it integrates to 1 over a full circle. */
 function spreadNorm(s: number): number {
@@ -79,6 +84,8 @@ export interface Ocean {
   field: WaveField;
   material: THREE.MeshPhysicalMaterial;
   uniforms: Record<string, THREE.IUniform>;
+  /** Stylised (exaggerated, readable from the overview) or realistic (true scale) waves. */
+  setStyle(stylised: boolean, size?: number, steepness?: number): void;
 }
 
 /**
@@ -110,8 +117,13 @@ export async function createOcean(
     uOrigin: { value: new THREE.Vector2() },
     uTime: { value: 0 },
     uWaveScale: { value: 1 },
-    uSpread: { value: new THREE.Vector2(SPREAD_WIND_SEA, SPREAD_SWELL) },
-    uSpreadNorm: { value: new THREE.Vector2(spreadNorm(SPREAD_WIND_SEA), spreadNorm(SPREAD_SWELL)) },
+    uStyle: { value: 0 },
+    uSteep: { value: 1 },
+    uStyleSpeed: { value: 1.5 },
+    uSurfScale: { value: 1 },
+    uCrestColour: { value: new THREE.Color('#5fa3b0') },
+    uSpread: { value: new THREE.Vector2() },
+    uSpreadNorm: { value: new THREE.Vector2() },
     uFoam: { value: 1 },
     uSurf: { value: 1 },
     uGlint: { value: 6 },
@@ -167,8 +179,34 @@ export async function createOcean(
     );
   };
 
-  return { mesh, field, material, uniforms };
+  const ocean: Ocean = {
+    mesh,
+    field,
+    material,
+    uniforms,
+    setStyle(stylised, size = STYLISED_SIZE, steepness = STYLISED_STEEPNESS) {
+      const spread = stylised ? SPREAD_STYLISED : SPREAD_REALISTIC;
+      uniforms.uStyle.value = stylised ? 1 : 0;
+      uniforms.uWaveScale.value = stylised ? size : 1;
+      uniforms.uSteep.value = steepness;
+      // A real-width surf zone vanishes at map scale; widen it, but far less than the waves.
+      uniforms.uSurfScale.value = stylised ? 8 : 1;
+      uniforms.uFoam.value = stylised ? 0.7 : 1;
+      uniforms.uSpread.value.set(...spread);
+      uniforms.uSpreadNorm.value.set(spreadNorm(spread[0]), spreadNorm(spread[1]));
+    },
+  };
+  ocean.setStyle(true);
+  return ocean;
 }
+
+/** Wave size slider position (0-100) to scale factor, logarithmic from 10x to 1000x. */
+const sliderToSize = (v: number) => {
+  const size = 10 ** (1 + (2 * v) / 100);
+  const step = 10 ** Math.floor(Math.log10(size) - 1); // two significant figures
+  return Math.round(size / step) * step;
+};
+const sizeToSlider = (size: number) => ((Math.log10(size) - 1) / 2) * 100;
 
 /** Adds the sea controls to the HUD, after the rain controls. */
 export function mountSeaControls(hud: HTMLElement, ocean: Ocean, flatSea: THREE.Object3D) {
@@ -176,24 +214,38 @@ export function mountSeaControls(hud: HTMLElement, ocean: Ocean, flatSea: THREE.
   box.className = 'sea-controls';
   const valid = new Date(ocean.field.meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
   box.innerHTML = `
-    <label><input type="checkbox" data-sea="live" checked /> Live sea state</label>
-    <label>Wave size <input type="range" data-sea="scale" min="1" max="60" step="1" value="1" />
-      <output data-sea="scale-value">1×</output></label>
+    <label>Sea
+      <select data-sea="mode">
+        <option value="stylised" selected>Stylised waves</option>
+        <option value="realistic">Realistic (true scale)</option>
+        <option value="flat">Flat</option>
+      </select></label>
+    <label data-sea="stylised">Wave size <input type="range" data-sea="size" min="0" max="100" step="1"
+      value="${sizeToSlider(STYLISED_SIZE)}" /> <output data-sea="size-value"></output></label>
+    <label data-sea="stylised">Wave steepness <input type="range" data-sea="steep" min="1" max="12" step="0.5"
+      value="${STYLISED_STEEPNESS}" /> <output data-sea="steep-value"></output></label>
     <p class="hint">Met Office UK wave model, valid ${valid} UTC. ${ocean.field.meta.attribution}.</p>
   `;
   const hint = hud.querySelector('.hint:last-of-type');
   hud.insertBefore(box, hint);
 
-  const live = box.querySelector<HTMLInputElement>('[data-sea="live"]')!;
-  const scale = box.querySelector<HTMLInputElement>('[data-sea="scale"]')!;
-  const scaleValue = box.querySelector<HTMLOutputElement>('[data-sea="scale-value"]')!;
+  const mode = box.querySelector<HTMLSelectElement>('[data-sea="mode"]')!;
+  const size = box.querySelector<HTMLInputElement>('[data-sea="size"]')!;
+  const steep = box.querySelector<HTMLInputElement>('[data-sea="steep"]')!;
+  const sizeValue = box.querySelector<HTMLOutputElement>('[data-sea="size-value"]')!;
+  const steepValue = box.querySelector<HTMLOutputElement>('[data-sea="steep-value"]')!;
   const apply = () => {
-    ocean.mesh.visible = live.checked;
-    flatSea.visible = !live.checked;
-    ocean.uniforms.uWaveScale.value = Number(scale.value);
-    scaleValue.textContent = `${scale.value}×`;
+    const stylised = mode.value === 'stylised';
+    ocean.mesh.visible = mode.value !== 'flat';
+    flatSea.visible = mode.value === 'flat';
+    const sizeFactor = sliderToSize(Number(size.value));
+    ocean.setStyle(stylised, sizeFactor, Number(steep.value));
+    sizeValue.textContent = `${sizeFactor}×`;
+    steepValue.textContent = `${steep.value}×`;
+    for (const el of box.querySelectorAll<HTMLElement>('[data-sea="stylised"]')) el.style.display = stylised ? '' : 'none';
   };
-  live.addEventListener('change', apply);
-  scale.addEventListener('input', apply);
+  mode.addEventListener('change', apply);
+  size.addEventListener('input', apply);
+  steep.addEventListener('input', apply);
   apply();
 }

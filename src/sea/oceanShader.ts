@@ -47,7 +47,12 @@ export const fragmentPars = /* glsl */ `
   uniform vec3 uWaveScaleBytes; // metres / seconds / m s-1 per byte for Hs, Tp, wind
   uniform vec2 uOrigin;     // metres, snapped to TILE * uWaveScale
   uniform float uTime;
-  uniform float uWaveScale; // spatial exaggeration (Froude-scaled in time)
+  uniform float uWaveScale; // spatial exaggeration
+  uniform float uStyle;     // 0 = realistic (Froude-scaled), 1 = stylised
+  uniform float uSteep;     // stylised slope exaggeration
+  uniform float uStyleSpeed; // stylised animation speed (wave periods per real period)
+  uniform float uSurfScale; // surf zone width exaggeration
+  uniform vec3 uCrestColour;
   uniform vec2 uSpread;     // cos^2s spreading exponent s: wind sea, swell
   uniform vec2 uSpreadNorm; // matching normalisation constants
   uniform float uFoam;
@@ -194,19 +199,23 @@ export const fragmentMain = /* glsl */ `
     ) / (2.0 * uDepthGrid.z);
     float coastDistance = -ground.g / max(length(meshGrad), 1e-4);
 
-    // Work in "model" metres: the exaggerated sea is a Froude-scaled copy of the
-    // real one, so slopes are unchanged and periods grow with sqrt(scale).
+    // Work in "model" metres. Realistic mode is a Froude-scaled copy of the real
+    // sea, so slopes are unchanged and periods grow with sqrt(scale). Stylised
+    // mode blows the waves up hugely so they read from the overview, keeps real
+    // periods so they still move, and steepens them (uSteep) so their relative
+    // size shows in the shading.
     vec2 local = (mapPos - uOrigin) / uWaveScale;
     // Gently warp the plane so the fixed wave bank never shows a regular lattice.
     local += 30.0 * (vec2(seaNoise(local / 350.0), seaNoise(local / 350.0 + 19.7)) - 0.5)
            + 8.0 * (vec2(seaNoise(local / 90.0 + 3.1), seaNoise(local / 90.0 + 41.3)) - 0.5);
     float footprint = max(length(dFdx(local)), length(dFdy(local)));
-    float t = uTime / sqrt(uWaveScale);
+    float t = mix(uTime / sqrt(uWaveScale), uTime * uStyleSpeed, uStyle);
     SeaSurface sea = seaEvaluate(local, footprint, max(depth / uWaveScale, 0.5), t,
                                  hsW, dirW, tpW, hsS, dirS, tpS);
 
     // Normal from the resolved slopes. World X = east, world Z = -north.
-    vec3 worldNormal = normalize(vec3(-sea.slope.x, 1.0, sea.slope.y));
+    vec2 slope = sea.slope * mix(1.0, uSteep, uStyle);
+    vec3 worldNormal = normalize(vec3(-slope.x, 1.0, slope.y));
     normal = normalize((viewMatrix * vec4(worldNormal, 0.0)).xyz);
 
     // Specular roughness from unresolved slopes. Cox & Munk (1954) give the
@@ -234,7 +243,7 @@ export const fragmentMain = /* glsl */ `
     // Surf: waves break once height reaches ~0.78 x depth (McCowan), so on a
     // typical 1:50 beach the surf zone is about 60 x Hs wide. Below a pixel's
     // footprint it fades to its average coverage instead of aliasing.
-    float surfWidth = 60.0 * hs * uWaveScale;
+    float surfWidth = 60.0 * hs * uSurfScale;
     float footprintMetres = footprint * uWaveScale;
     float surfNoise = seaFbm(vec2(coastDistance / (0.35 * surfWidth + 1.0) - t * 0.15, seaNoise(mapPos / 400.0) * 6.0));
     float surf = (1.0 - smoothstep(0.0, surfWidth + footprintMetres, coastDistance))
@@ -246,6 +255,10 @@ export const fragmentMain = /* glsl */ `
     float viewCos = max(abs(dot(normalize(vViewPosition), normal)), 0.15);
     float water = 1.0 - exp(-depth * 0.09 / viewCos);
     vec3 body = mix(uShallowColour, uDeepColour, 1.0 - exp(-depth / 25.0));
+    // Stylised: light crests and dark troughs, so the waves read even away from the sun.
+    float crest = sea.eta / sqrt(max(sea.resolvedVar, 1e-6));
+    body = mix(body, uCrestColour, uStyle * 0.7 * smoothstep(0.3, 2.2, crest));
+    body *= 1.0 - uStyle * 0.45 * smoothstep(0.3, 2.0, -crest);
     diffuseColor.rgb = mix(body, vec3(0.9), foam);
     roughnessFactor = mix(roughnessFactor, 1.0, foam);
     seaAlpha = max(water, foam);
