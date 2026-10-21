@@ -46,7 +46,7 @@ The camera is kept above the ground all the way down by clamping to the terrain 
 
 ### Near plane and depth precision
 
-The renderer already uses a logarithmic depth buffer, so precision holds from metres to thousands of km with one far plane (20,000 km). Only the near plane needs to move: it is set to a quarter of the height above ground, clamped between 0.3 m and 100 m. At 50 m it is about 12 m, and on the UK overview it is 100 m. The cloud pass reconstructs distance from log depth using only the far plane, so it is unaffected.
+The renderer already uses a logarithmic depth buffer, so precision holds from metres to thousands of km with one far plane (20,000 km). Only the near plane needs to move: it is set to a quarter of the height above ground, clamped between 0.3 m and 100 m. At 50 m it is about 12 m, and on the UK overview it is 100 m. The cloud pass reconstructs distance from log depth using only the far plane. Its view rays were first unprojected on the far plane, which broke down (and the clouds vanished) below about 10 m with a 0.4 m near plane, so since 01bae01 they are unprojected on the near plane instead. On the way down the dive, the cloud opacity also ramps to fully opaque as the camera nears the cloud layer (b4dff09), so the deck looks solid from below.
 
 ### Haze
 
