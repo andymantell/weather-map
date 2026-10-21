@@ -103,7 +103,7 @@ Outputs for `--name foo`:
 - `foo.json` holds the grid definition, corner lon/lats, run and valid times, units, attribution, and the decoding
   values: `value = offset + scale * code`, where code 0 means no data.
 - `foo.bin` (with `--bin`) holds the same codes as raw little-endian Uint16. It goes straight into a
-  `THREE.DataTexture`, but GitHub Pages does not compress it, so it is about 2 MB per field compared with
+  `THREE.DataTexture`, but static hosts often serve it uncompressed, so it is about 2 MB per field compared with
   about 1.4 MB for the PNG.
 - `foo.preview.png` (with `--preview`) is an 8-bit greyscale picture for checking by eye.
 
