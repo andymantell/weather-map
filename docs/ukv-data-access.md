@@ -110,6 +110,17 @@ Outputs for `--name foo`:
 Checked on the 2 m temperature field: decoding the PNG gives back the source NetCDF values to within 0.00017 K.
 The `.bin` codes matched the PNG exactly. The previews are north-up with the UK in the right place.
 
+![2 m temperature preview on the native LAEA grid](images/ukv-t2m-laea-preview.png)
+
+*2 m temperature at T+6h from the 03Z run on 21 October 2026, valid 09:00Z, on the native LAEA grid (`--preview`).
+Darker is colder. You can see the whole `uk_extended` domain: Ireland, Great Britain, southern Norway at the top
+right, and France and the Alps at the bottom right.*
+
+![Total cloud preview resampled to lat/lon](images/ukv-total-cloud-latlon-preview.png)
+
+*Total cloud at T+3h from the 04Z run, valid 07:00Z, after `--latlon 0.02 --range 0 1`. White is overcast. The
+curved black edges are the no-data cells left where the LAEA domain doesn't fill the lat/lon rectangle.*
+
 16 bits instead of 8 is a deliberate choice. Temperature spans about 20 K here, and 8 bits would give 0.08 K
 steps, which band visibly in smooth gradients. Cloud fraction would be fine at 8 bits. The 16-bit format keeps
 one decoder for everything.
