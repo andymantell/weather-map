@@ -25,13 +25,13 @@
   "trees": 6942,
   "mesh": {
     "step": 4.0,
-    "vertices": 811618,
-    "triangles": 1618986,
-    "maxError": 0.5
+    "vertices": 348303,
+    "triangles": 692832,
+    "maxError": 1.0
   },
   "hasCoast": true,
   "coast": {
-    "cliffShare": 0.444
+    "cliffShare": 0.325
   },
   "classes": {
     "sea": 0,
@@ -53,7 +53,9 @@
     "path": 16,
     "young": 17,
     "felled": 18,
-    "mixed": 19
+    "mixed": 19,
+    "intertidal": 20,
+    "saltmarsh": 21
   },
   "attribution": "Overture Maps Foundation (incl. \u00a9 OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles; Environment Agency LIDAR Composite 2022 (\u00a9 Environment Agency copyright and/or database right 2022); National Forest Inventory \u00a9 Forestry Commission; Priority Habitats Inventory \u00a9 Natural England (Open Government Licence v3.0); Contains modified Copernicus Sentinel data",
   "imagery": {
