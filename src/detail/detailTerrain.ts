@@ -74,7 +74,7 @@ interface Tile {
 export interface DetailTerrain {
   group: THREE.Group;
   rects: THREE.Vector4[];
-  /** Each tile's drawn ground heights (m, true scale) and grid, for the sea's surf. */
+  /** Each tile's drawn ground heights (m, true scale, sea bed cut at -2 m) and grid, for the sea's surf. */
   grounds: { heights: Float32Array; width: number; height: number; x0: number; yMax: number; spacing: number; hasCoast: boolean }[];
   /** Drawn ground height (km, exaggerated) inside a tile, or null outside every tile. */
   terrainAt(x: number, z: number): number | null;
@@ -316,8 +316,11 @@ export async function createDetailTerrain(
     }
   };
 
+  // The sea finds the coast from these heights (height over gradient) and shoals towards it,
+  // so it gets the shore only: the sea bed below 2 m is a made-up shelf (build_area.py
+  // sea_bed) whose slope it would read as coast and draw as rings of surf.
   const grounds = tiles.map(({ area: { heights, meta } }) => ({
-    heights,
+    heights: heights.map((h) => Math.max(h, -2)),
     width: meta.width,
     height: meta.height,
     x0: meta.xMin,
