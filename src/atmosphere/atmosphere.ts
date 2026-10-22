@@ -44,7 +44,7 @@ const NIGHT_GLOW = new THREE.Vector3(1.6e-9, 1.8e-9, 2.6e-9);
  */
 const TWILIGHT_ADAPTATION = 0.6;
 const TWILIGHT_KNEE = 1e3;
-const ADAPTATION = 0.98;
+const ADAPTATION = 1.03;
 const MAX_PRE_EXPOSURE = 3e6;
 /** Highest the sky dome is drawn from, km. */
 const SKY_MAX_ALTITUDE = 6;
