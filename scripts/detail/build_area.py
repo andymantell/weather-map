@@ -42,11 +42,12 @@ OVERTURE = "overturemaps-us-west-2/release/2026-09-23.0"
 TILE_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
 
 AREAS = {
-    # Lon/lat box, height grid spacing (m), cover texel size (m).
-    "plymouth": dict(bbox=(-4.25, 50.33, -4.0, 50.45), spacing=20, texel=4),
-    "kielder": dict(bbox=(-2.75, 55.1, -2.35, 55.33), spacing=25, texel=8),
+    # Lon/lat box, height grid spacing (m), cover texel size (m), and the step (m) of the fine
+    # height raster the ground mesh is triangulated from (a divisor of the spacing).
+    "plymouth": dict(bbox=(-4.25, 50.33, -4.0, 50.45), spacing=20, texel=4, fine=4),
+    "kielder": dict(bbox=(-2.75, 55.1, -2.35, 55.33), spacing=25, texel=8, fine=5),
     # North Cornwall, Tintagel to Boscastle: a cliffed coast to test the shoreline against.
-    "tintagel": dict(bbox=(-4.80, 50.63, -4.62, 50.72), spacing=10, texel=4),
+    "tintagel": dict(bbox=(-4.80, 50.63, -4.62, 50.72), spacing=10, texel=4, fine=5),
 }
 
 # Land-cover classes written to cover.png; src/detail/ground.ts mirrors these.
@@ -182,6 +183,81 @@ def sea_bed(heights, d, spacing):
     blurred = gaussian_filter(np.clip(np.minimum(heights, -2.0), -200, -2), 400 / spacing, mode="nearest")
     shelf = -(2 + 18 * (1 - np.exp(np.minimum(d, 0) / 300)))
     return np.minimum(blurred, shelf)
+
+
+# Largest height error (m) the ground mesh may make against the fine raster.
+MESH_ERROR = 0.5
+
+
+def write_mesh(heights, k, step, path, max_error=MESH_ERROR):
+    """Writes the ground as an adaptive triangle mesh (see docs/coastal-cliffs.md).
+
+    Greedy Delaunay refinement (Delatin) adds points until every fine sample is within
+    max_error, so flat fields get big triangles and cliffs dense strips. Every k-th sample
+    along the tile edge is forced in so the edge matches height.png and the skirt.
+
+    ground.bin: uint32 vertex count n, uint32 triangle count t, float32 0; then uint16 column[n],
+    uint16 row[n], int16 height[n] in quarter metres (fine raster samples, north-west origin);
+    padding to 4 bytes; uint32 indices[3t], counter-clockwise seen from above.
+    """
+    import pydelatin
+
+    rows, cols = heights.shape
+    q = np.round(heights * 4) / 4
+    tin = pydelatin.Delatin(q.astype(np.float32), width=cols, height=rows, max_error=max_error)
+    verts = np.round(tin.vertices[:, :2]).astype(np.int64).tolist()
+    index = {tuple(v): n for n, v in enumerate(verts)}
+
+    def vertex(x, y):
+        if (x, y) not in index:
+            index[(x, y)] = len(verts)
+            verts.append([x, y])
+        return index[(x, y)]
+
+    def split_point(a, b):
+        """A k-th sample strictly inside a tile-edge segment a-b, or None."""
+        (ax, ay), (bx, by) = verts[a], verts[b]
+        if ax == bx and ax in (0, cols - 1):
+            lo, hi, fixed, vertical = min(ay, by), max(ay, by), ax, True
+        elif ay == by and ay in (0, rows - 1):
+            lo, hi, fixed, vertical = min(ax, bx), max(ax, bx), ay, False
+        else:
+            return None
+        m = round((lo + hi) / 2 / k) * k
+        if m <= lo:
+            m += k
+        elif m >= hi:
+            m -= k
+        if not lo < m < hi:
+            return None
+        return vertex(fixed, m) if vertical else vertex(m, fixed)
+
+    done, stack = [], tin.triangles.astype(np.int64).tolist()
+    while stack:
+        tri = stack.pop()
+        for e in range(3):
+            a, b, c = tri[e], tri[(e + 1) % 3], tri[(e + 2) % 3]
+            m = split_point(a, b)
+            if m is not None:
+                stack += [[a, m, c], [m, b, c]]
+                break
+        else:
+            done.append(tri)
+    v = np.asarray(verts)
+    t = np.asarray(done, dtype=np.uint32)
+    # Wind counter-clockwise seen from above with x east and z (rows) south, as ground.ts does.
+    p0, p1, p2 = v[t[:, 0]], v[t[:, 1]], v[t[:, 2]]
+    up = (p1[:, 1] - p0[:, 1]) * (p2[:, 0] - p0[:, 0]) - (p1[:, 0] - p0[:, 0]) * (p2[:, 1] - p0[:, 1])
+    t[up < 0] = t[up < 0][:, [0, 2, 1]]
+    h = np.round(q[v[:, 1], v[:, 0]] * 4).astype("<i2")
+    body = (struct.pack("<IIf", len(v), len(t), 0.0) + v[:, 0].astype("<u2").tobytes()
+            + v[:, 1].astype("<u2").tobytes() + h.tobytes())
+    body += b"\0" * (-len(body) % 4) + t.astype("<u4").tobytes()
+    path.write_bytes(body)
+    stats = {"step": float(step), "vertices": len(v), "triangles": len(t), "maxError": max_error}
+    print(f"mesh: {len(v)} vertices, {len(t)} triangles (grid has {((rows - 1) // k + 1) * ((cols - 1) // k + 1)}),"
+          f" {len(body) / 1e6:.1f} MB")
+    return stats
 
 
 def cliffness(heights, d, spacing, cliff_lines, raster, grid_index):
@@ -320,9 +396,16 @@ def main(area_name):
     y1 = math.floor(min(cy[2], cy[3]) / spacing) * spacing
     xs = np.arange(x0, x1 + spacing, spacing)
     ys = np.arange(y1, y0 - spacing, -spacing)
-    gx, gy = np.meshgrid(xs, ys)
+    # Heights are worked out on a fine raster, which the ground mesh is built from; the grid
+    # (height.png) is every k-th sample of it.
+    step = cfg["fine"]
+    k = spacing // step
+    fxs = np.arange(x0, x1 + step, step)
+    fys = np.arange(y1, y0 - step, -step)
+    gx, gy = np.meshgrid(fxs, fys)
     lon, lat = (np.asarray(a) for a in to_lonlat.transform(gx, gy))
     heights = sample_elevation(lon, lat)
+    del lon, lat
     print("heights", heights.shape, heights.min(), heights.max())
 
     # --- Land cover ---------------------------------------------------------
@@ -394,8 +477,8 @@ def main(area_name):
     # ESA WorldCover calls a lot of hedged lowland pasture "shrub"; only treat it as
     # heath or moorland on high ground. Woods on high ground are mostly conifer plantations.
     cj, ci = np.mgrid[0:ch, 0:cw]
-    hj = np.clip((cj * texel / spacing).astype(int), 0, len(ys) - 1)
-    hi = np.clip((ci * texel / spacing).astype(int), 0, len(xs) - 1)
+    hj = np.clip((cj * texel / step).astype(int), 0, len(fys) - 1)
+    hi = np.clip((ci * texel / step).astype(int), 0, len(fxs) - 1)
     high = heights[hj, hi] > UPLAND_M
     shrub = cover_arr == UPLAND_SHRUB
     cover_arr[shrub] = np.where(high[shrub], C["heath"], C["fields"])
@@ -434,27 +517,30 @@ def main(area_name):
         sea = cover_arr == C["sea"]
         signed = (distance_transform_edt(~sea) - distance_transform_edt(sea)) * texel
         d = signed[gj, gi]
-        heights = np.where(d > 0, heights, sea_bed(heights, d, spacing))
+        heights = np.where(d > 0, heights, sea_bed(heights, d, step))
         far = np.where(d > 0, np.maximum(heights, 0.5), np.minimum(heights, -2.0))
         t = np.clip((np.abs(d) - 20) / 20, 0, 1)
         shore = d * 0.08 * (1 - t) + far * t
         # On cliffs keep the measured heights, only pushing the sea side under water so the
         # face drops straight in at the mapped coastline (see docs/coastal-cliffs.md).
         cliff_lines = [g for g, s, c in zip(land_geoms, land_sub, land_cls) if s == "physical" and c == "cliff"]
-        c = cliffness(heights, d, spacing, cliff_lines, (x0, y1, texel, cw, ch), (gj, gi))
+        c = cliffness(heights, d, step, cliff_lines, (x0, y1, texel, cw, ch), (gj, gi))
         heights = shore * (1 - c) + far * c
         coast_cells = np.abs(d) < 2 * spacing
         coast_stats = {"cliffShare": round(float((c[coast_cells] > 0.5).mean()), 3) if coast_cells.any() else 0}
         print("coast", coast_stats)
-    v = np.round(heights * 4) / 4 + 32768
+    mesh = write_mesh(heights, k, step, out / "ground.bin")
+    grid = heights[::k, ::k]
+    assert grid.shape == (len(ys), len(xs))
+    v = np.round(grid * 4) / 4 + 32768
     rr = np.floor(v / 256)
     gg = np.floor(v - rr * 256)
     bb = np.round((v - rr * 256 - gg) * 256)
     Image.fromarray(np.stack([rr, gg, bb], -1).astype(np.uint8), "RGB").save(out / "height.png", optimize=True)
 
     def height_at(x, y):
-        fx = np.clip((x - x0) / spacing, 0, len(xs) - 1.001)
-        fy = np.clip((y1 - y) / spacing, 0, len(ys) - 1.001)
+        fx = np.clip((x - x0) / step, 0, len(fxs) - 1.001)
+        fy = np.clip((y1 - y) / step, 0, len(fys) - 1.001)
         i, j = int(fx), int(fy)
         a, b = fx - i, fy - j
         return float(heights[j, i] * (1 - a) * (1 - b) + heights[j, i + 1] * a * (1 - b)
@@ -535,7 +621,7 @@ def main(area_name):
         "coverTexel": texel, "coverWidth": cw, "coverHeight": ch,
         "minHeight": float(heights.min()), "maxHeight": float(heights.max()),
         "buildings": count, "buildingStats": stats, "trees": len(tbuf) // 12,
-        "hasCoast": has_coast, **({"coast": coast_stats} if has_coast else {}), "classes": CLASSES,
+        "mesh": mesh, "hasCoast": has_coast, **({"coast": coast_stats} if has_coast else {}), "classes": CLASSES,
         "attribution": "Overture Maps Foundation (incl. © OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles",
     }
     extra = []

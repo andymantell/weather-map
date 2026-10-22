@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Area } from './area';
+import { type Area, tinHeight } from './area';
 import type { ScaledUniforms } from './buildings';
 import { NOISE } from './ground';
 
@@ -13,6 +13,10 @@ import { NOISE } from './ground';
 /** Ground height (m) exactly on the tile mesh's triangles, so ribbons never cut into it. */
 function meshHeight(area: Area, x: number, z: number): number {
   const { meta, heights } = area;
+  if (area.tin) {
+    const h = tinHeight(area.tin, Math.min(Math.max(x, 0), area.sizeX), Math.min(Math.max(z, 0), area.sizeZ));
+    if (h !== null) return h;
+  }
   const fx = Math.min(Math.max(x / meta.spacing, 0), meta.width - 1.0001);
   const fz = Math.min(Math.max(z / meta.spacing, 0), meta.height - 1.0001);
   const i = Math.floor(fx);

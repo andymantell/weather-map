@@ -5,3 +5,4 @@ pyarrow>=17
 shapely>=2.0
 scipy>=1.11
 rasterio
+pydelatin>=0.2

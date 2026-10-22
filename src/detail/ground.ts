@@ -351,7 +351,8 @@ function imageryTexture(area: Area): THREE.Texture {
   return texture;
 }
 
-export function createGround(area: Area): Ground {
+/** The ground as the regular height grid, for areas built before the adaptive mesh. */
+function gridGeometry(area: Area, geometry: THREE.BufferGeometry) {
   const { meta, heights } = area;
   const w = meta.width;
   const h = meta.height;
@@ -380,9 +381,19 @@ export function createGround(area: Area): Ground {
       indices[n++] = d;
     }
   }
-  const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+}
+
+export function createGround(area: Area): Ground {
+  const { meta } = area;
+  const geometry = new THREE.BufferGeometry();
+  if (area.tin) {
+    geometry.setAttribute('position', new THREE.BufferAttribute(area.tin.positions, 3));
+    geometry.setIndex(new THREE.BufferAttribute(area.tin.indices, 1));
+  } else {
+    gridGeometry(area, geometry);
+  }
   geometry.computeVertexNormals();
 
   const coverTex = new THREE.DataTexture(area.cover, meta.coverWidth, meta.coverHeight, THREE.RedFormat);

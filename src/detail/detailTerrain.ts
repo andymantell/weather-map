@@ -86,20 +86,23 @@ export interface DetailTerrain {
 /** Pulls heights near the tile edge onto the coarse terrain so the two surfaces meet. */
 function blendEdges(area: Area, coarse: GroundSampler, coarseScale: number) {
   const { meta, heights } = area;
+  const blend = (x: number, z: number, h: number) => {
+    const edge = Math.min(x, z, area.sizeX - x, area.sizeZ - z);
+    if (edge >= EDGE_BLEND) return h;
+    const worldX = (meta.xMin + x) / 1000;
+    const worldZ = -(meta.yMax - z) / 1000;
+    const coarseM = (coarse.terrainAt(worldX, worldZ) / coarseScale) * 1000;
+    return coarseM + (h - coarseM) * THREE.MathUtils.smoothstep(edge, 0, EDGE_BLEND);
+  };
   for (let j = 0; j < meta.height; j++) {
     for (let i = 0; i < meta.width; i++) {
-      const x = i * meta.spacing;
-      const z = j * meta.spacing;
-      const edge = Math.min(x, z, area.sizeX - x, area.sizeZ - z);
-      if (edge >= EDGE_BLEND) continue;
-      const worldX = (meta.xMin + x) / 1000;
-      const worldZ = -(meta.yMax - z) / 1000;
-      const coarseM = (coarse.terrainAt(worldX, worldZ) / coarseScale) * 1000;
-      const t = THREE.MathUtils.smoothstep(edge, 0, EDGE_BLEND);
       const k = j * meta.width + i;
-      heights[k] = coarseM + (heights[k] - coarseM) * t;
+      heights[k] = blend(i * meta.spacing, j * meta.spacing, heights[k]);
     }
   }
+  // The mesh's edge vertices sit on grid samples, so it meets the skirt exactly.
+  const p = area.tin?.positions;
+  if (p) for (let k = 0; k < p.length; k += 3) p[k + 1] = blend(p[k], p[k + 2], p[k + 1]);
 }
 
 /** A curtain around the tile from its edge heights down by SKIRT metres. */

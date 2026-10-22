@@ -10,7 +10,7 @@
   "coverTexel": 4,
   "coverWidth": 3102,
   "coverHeight": 2398,
-  "minHeight": -31.94145980898223,
+  "minHeight": -31.94215905625223,
   "maxHeight": 307.1801403778263,
   "buildings": 3462,
   "buildingStats": {
@@ -25,7 +25,7 @@
   "trees": 6,
   "hasCoast": true,
   "coast": {
-    "cliffShare": 0.939
+    "cliffShare": 0.951
   },
   "classes": {
     "sea": 0,
