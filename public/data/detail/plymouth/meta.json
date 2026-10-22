@@ -25,8 +25,8 @@
   "trees": 6942,
   "mesh": {
     "step": 4.0,
-    "vertices": 348303,
-    "triangles": 692832,
+    "vertices": 348447,
+    "triangles": 693121,
     "maxError": 1.0
   },
   "hasCoast": true,
