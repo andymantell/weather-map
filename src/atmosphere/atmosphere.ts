@@ -38,8 +38,13 @@ const REFERENCE_VISIBILITY = 30;
 const FULL_MOON = 2.5e-6;
 /** Natural night sky (airglow, zodiacal light, starlight) plus some town glow, radiance relative to sunlight. */
 const NIGHT_GLOW = new THREE.Vector3(1.6e-9, 1.8e-9, 2.6e-9);
-/** How strongly exposure follows the light: 1 would make midnight as bright as noon. */
-const ADAPTATION = 0.85;
+/**
+ * How strongly exposure follows the light (1 would make midnight as bright as noon): weakly down to deep twilight
+ * (light 1/1000 of the reference), then strongly.
+ */
+const TWILIGHT_ADAPTATION = 0.6;
+const TWILIGHT_KNEE = 1e3;
+const ADAPTATION = 0.98;
 const MAX_PRE_EXPOSURE = 3e6;
 /** Highest the sky dome is drawn from, km. */
 const SKY_MAX_ALTITUDE = 6;
@@ -561,7 +566,12 @@ export class Atmosphere {
     const glow = Math.PI * luminance(NIGHT_GLOW) * this.sunIlluminance.x;
     const ground = Math.max(direct + skyLight + glow, 1e-12);
     const ratio = this.referenceIlluminance / ground;
-    const target = THREE.MathUtils.clamp(ratio > 1 ? Math.pow(ratio, ADAPTATION) : Math.pow(ratio, 0.4), 0.3, MAX_PRE_EXPOSURE);
+    // Through twilight the eye adapts only part way (dusk should look like dusk); deeper into the night it keeps
+    // adapting almost fully, so moonlight is dark but readable.
+    const lr = Math.log(ratio);
+    const knee = Math.log(TWILIGHT_KNEE);
+    const adapted = lr <= 0 ? 0.4 * lr : lr <= knee ? TWILIGHT_ADAPTATION * lr : TWILIGHT_ADAPTATION * knee + ADAPTATION * (lr - knee);
+    const target = THREE.MathUtils.clamp(Math.exp(adapted), 0.3, MAX_PRE_EXPOSURE);
     if (this.snap) this.preExposure = target;
     else this.preExposure = Math.exp(Math.log(this.preExposure) + (Math.log(target) - Math.log(this.preExposure)) * (1 - Math.exp(-dt / 0.9)));
     this.snap = false;
@@ -570,7 +580,9 @@ export class Atmosphere {
     const shown = Math.min(Math.pow((ground * p) / this.referenceIlluminance, 0.7), 1.2);
     const tint = new THREE.Vector3().copy(keyGround).multiplyScalar(Math.max(this.keyDirection.y, 0)).add(this.skyIrradiance);
     tint.divideScalar(Math.max(tint.x, tint.y, tint.z, 1e-30));
-    if (this.keyIsMoon) tint.lerp(new THREE.Vector3(0.75, 0.82, 1.0), 0.5);
+    // Only a hint of the light's colour: fully tinted, the rain's blue-grey goes navy under a blue twilight sky.
+    tint.lerp(new THREE.Vector3(1, 1, 1), 0.65);
+    if (this.keyIsMoon) tint.lerp(new THREE.Vector3(0.8, 0.86, 1.0), 0.3);
     for (const c of this.displayLights) c.setRGB(tint.x * shown, tint.y * shown, tint.z * shown);
     this.skyMaterial.uniforms.uPreExposure.value = p;
     this.skyMaterial.uniforms.uTime.value = this.clock;

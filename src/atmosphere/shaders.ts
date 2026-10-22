@@ -84,12 +84,12 @@ vec2 transmittanceUv(float r, float mu) {
 }
 
 vec3 transmittanceToTop(float r, float mu) {
-  return texture(uTransmittanceLut, transmittanceUv(r, mu)).rgb;
+  return textureLod(uTransmittanceLut, transmittanceUv(r, mu), 0.0).rgb;
 }
 
 vec3 multiScattering(float h, float mu) {
   vec2 uv = clamp(vec2(mu * 0.5 + 0.5, h / (TOP - BOTTOM)), vec2(0.5 / 32.0), vec2(1.0 - 0.5 / 32.0));
-  return texture(uMultiScatteringLut, uv).rgb;
+  return textureLod(uMultiScatteringLut, uv, 0.0).rgb;
 }
 
 // 0 if the planet hides the light from a point at radius r whose local zenith cosine to the light is mu.

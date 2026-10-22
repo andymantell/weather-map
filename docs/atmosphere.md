@@ -86,7 +86,11 @@ the static hour's day (21 October 2026). `node scripts/atmosphere/shots.mjs` rep
 - From the map view the sky is drawn as if from 6 km up (the map camera is hundreds of km up, which would otherwise
   put it in space), and the UK picks up a faint blue veil. At night the map is moonlit.
 
-Frame times on a real GPU: to measure on Andy's machine (`--gpu`). The added cost is a few small LUT passes per frame
+On Andy's desktop GPU (Chrome, 1600x900, `--gpu`), with the detailed tiles: Plymouth Hoe at noon runs at a 12 ms
+median frame (p90 33 ms while tiles and clouds were still settling), and at 22:00 at 12.4 ms (p90 13.7 ms). There
+were no shader errors and no NaN or black pixels. The real-GPU run showed two problems, fixed since: the land at dusk
+was lit almost like day, because exposure adapted too far through twilight, and the rain went navy against twilight
+skies, because it took the full colour of the sky light. The added cost is a few small LUT passes per frame
 (sky views 2x192x108 with 40 steps, the froxel volume 32,768 cells with 24 steps), the sky dome, one PMREM re-bake
 when the sun, moon or cover changes, and a sky irradiance read-back every 0.4 s (asynchronous).
 
