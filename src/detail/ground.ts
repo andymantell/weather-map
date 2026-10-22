@@ -236,6 +236,50 @@ vec3 surfaceColour(vec2 p, out float rough) {
 `;
 
 /**
+ * Bare rock on steep faces: sea cliffs, quarries and crags. The satellite image and the plan-view
+ * textures smear down a near-vertical face, so steep ground gets its own rock, textured
+ * triplanar so it never stretches: strata bands across the face, joints, yellow lichen above
+ * the splash zone and a dark, wet, weedy foot. See docs/coastal-cliffs.md.
+ */
+const ROCK = /* glsl */ `
+varying vec3 vObjNormal;
+
+/** Share of rock from the true-scale slope: none below about 38 degrees, all above about 58. */
+float rockWeight(vec2 p) {
+  float w = 1.0 - smoothstep(0.53, 0.79, normalize(vObjNormal).y);
+  // Ragged edges, so grass reaches down gullies and rock breaks out along the lip.
+  return clamp(w * 1.5 - 0.25 + 0.6 * (fbm(p / 6.0) - 0.5), 0.0, 1.0);
+}
+
+/** Cliff rock colour (sRGB) at pos (m, y up); sets bump (m) and rough. */
+vec3 rockColour(vec3 pos, vec3 n, out float bump, out float rough) {
+  vec3 w = abs(n);
+  w /= w.x + w.y + w.z;
+  float tri = vnoise(pos.zy / 2.5) * w.x + vnoise(pos.xz / 2.5) * w.y + vnoise(pos.xy / 2.5) * w.z;
+  float fine = vnoise(pos.zy / 0.6) * w.x + vnoise(pos.xz / 0.6) * w.y + vnoise(pos.xy / 0.6) * w.z;
+  // Strata: bands in height, warped and gently dipping across the coast.
+  float layer = pos.y + fbm(pos.xz / 60.0) * 6.0 + dot(pos.xz, vec2(0.012, 0.007));
+  float band = fbm(vec2(layer / 1.6, 0.37));
+  float ledge = smoothstep(0.35, 0.65, fract(layer / 2.3 + 0.3 * tri));
+  vec3 c = mix(vec3(0.47, 0.45, 0.42), vec3(0.52, 0.43, 0.33), smoothstep(0.3, 0.7, fbm(pos.xz / 150.0)));
+  c = mix(c, vec3(0.30, 0.29, 0.28), 0.55 * band);
+  c *= 0.78 + 0.38 * tri + 0.14 * (fine - 0.5);
+  // Joints: dark vertical cracks.
+  float joint = 1.0 - smoothstep(0.02, 0.07, abs(vnoise(vec2(dot(pos.xz, vec2(0.7, 0.7)) / 3.0, layer / 9.0)) - 0.5));
+  c *= 1.0 - 0.35 * joint;
+  // Yellow-orange lichen a few metres up, out of the spray.
+  float lichen = smoothstep(2.0, 3.5, pos.y) * (1.0 - smoothstep(5.0, 10.0, pos.y)) * smoothstep(0.5, 0.75, fbm(pos.xz / 3.0 + pos.y));
+  c = mix(c, vec3(0.62, 0.50, 0.22), 0.45 * lichen);
+  // Wet, weedy foot up to the reach of the waves.
+  float wet = 1.0 - smoothstep(0.3, 3.0, pos.y + 0.8 * (tri - 0.5));
+  c = mix(c, vec3(0.16, 0.15, 0.10) * (0.8 + 0.4 * fine), wet * 0.8);
+  rough = mix(0.9, 0.35, wet);
+  bump = (band * 1.2 + ledge * 0.5 + tri * 0.5 + fine * 0.08 - joint * 0.3) * (1.0 - smoothstep(1.0, 6.0, length(fwidth(pos.xz))));
+  return c;
+}
+`;
+
+/**
  * Bump shading from surfBump (metres) by screen-space derivatives, as in Mikkelsen (2010),
  * "Bump Mapping Unparametrized Surfaces on the GPU". Tile meshes are in metres scaled to km.
  */
@@ -254,6 +298,22 @@ if (surfWater > 0.0) {
   vec3 sky = mix(vec3(1.05, 1.15, 1.3), vec3(0.35, 0.6, 1.0), smoothstep(0.0, 0.6, dot(r, up)));
   totalEmissiveRadiance += surfWater * fresnel * sky;
 }
+`;
+
+/** Fragment colour, roughness and bump: the land-cover surface, with rock over steep faces. */
+const SURFACE_WITH_ROCK = /* glsl */ `
+float surfRough;
+vec3 surf = surfaceColour(vLocal, surfRough);
+float rockW = rockWeight(vLocal);
+if (rockW > 0.0) {
+  float rockBump, rockRough;
+  vec3 rock = rockColour(vec3(vLocal.x, vHeight, vLocal.y), normalize(vObjNormal), rockBump, rockRough);
+  surf = mix(surf, rock, rockW);
+  surfRough = mix(surfRough, rockRough, rockW);
+  surfBump = mix(surfBump, rockBump, rockW);
+  surfWater *= 1.0 - rockW;
+}
+diffuseColor.rgb = pow(surf, vec3(2.2));
 `;
 
 const BUMP = /* glsl */ `
@@ -350,14 +410,11 @@ export function createGround(area: Area): Ground {
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vLocal;\nvarying float vHeight;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLocal = position.xz;\nvHeight = position.y;');
+      .replace('#include <common>', '#include <common>\nvarying vec2 vLocal;\nvarying float vHeight;\nvarying vec3 vObjNormal;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLocal = position.xz;\nvHeight = position.y;\nvObjNormal = objectNormal;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${NOISE}\n${FIELDS}\n${SURFACE}`)
-      .replace(
-        '#include <color_fragment>',
-        '#include <color_fragment>\nfloat surfRough;\ndiffuseColor.rgb = pow(surfaceColour(vLocal, surfRough), vec3(2.2));',
-      )
+      .replace('#include <common>', `#include <common>\n${NOISE}\n${FIELDS}\n${SURFACE}\n${ROCK}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>\n${SURFACE_WITH_ROCK}`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = surfRough;')
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${BUMP}`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${WATER}`);

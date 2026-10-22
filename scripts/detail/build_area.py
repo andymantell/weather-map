@@ -22,6 +22,7 @@ import os
 import pathlib
 import struct
 import sys
+import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
@@ -140,8 +141,16 @@ def fetch_tile(z, x, y):
     path = CACHE / "tiles" / f"{z}_{x}_{y}.png"
     if not path.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(TILE_URL.format(z=z, x=x, y=y)) as r:
-            path.write_bytes(r.read())
+        for attempt in range(4):
+            try:
+                with urllib.request.urlopen(TILE_URL.format(z=z, x=x, y=y), timeout=60) as r:
+                    path.write_bytes(r.read())
+                break
+            except OSError:
+                # Zoom 15 means hundreds of tiles per area, so ride out the odd dropped connection.
+                if attempt == 3:
+                    raise
+                time.sleep(2 ** attempt)
     rgb = np.asarray(Image.open(path).convert("RGB"), dtype=np.float64)
     return rgb[..., 0] * 256 + rgb[..., 1] + rgb[..., 2] / 256 - 32768
 

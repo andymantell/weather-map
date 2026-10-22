@@ -27,7 +27,7 @@ import { createTrees, TREE_CHUNK } from './trees';
  */
 
 /** Tiles baked so far by scripts/detail/build_area.py. */
-export const DETAIL_AREAS = ['plymouth', 'kielder'];
+export const DETAIL_AREAS = ['plymouth', 'kielder', 'tintagel'];
 
 /** Heights are blended into the coarse terrain over this distance from a tile's edge (m). */
 const EDGE_BLEND = 600;

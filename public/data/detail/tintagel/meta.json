@@ -1,0 +1,67 @@
+{
+  "proj": "+proj=laea +lat_0=54.9 +lon_0=-2.5 +x_0=0 +y_0=0 +ellps=GRS80 +units=m",
+  "xMin": -162480,
+  "xMax": -150070,
+  "yMin": -472440,
+  "yMax": -462850,
+  "spacing": 10,
+  "width": 1242,
+  "height": 960,
+  "coverTexel": 4,
+  "coverWidth": 3102,
+  "coverHeight": 2398,
+  "minHeight": -33.00000000000001,
+  "maxHeight": 307.1801403778263,
+  "buildings": 3462,
+  "buildingStats": {
+    "total": 3692,
+    "osm": 2494,
+    "osm_levels": 21,
+    "osm_height": 1272,
+    "ml": 1198,
+    "lidar": 500,
+    "lidar_rejected": 102
+  },
+  "trees": 6,
+  "hasCoast": true,
+  "coast": {
+    "cliffShare": 0.939
+  },
+  "classes": {
+    "sea": 0,
+    "fields": 1,
+    "park": 2,
+    "broadleaf": 3,
+    "conifer": 4,
+    "heath": 5,
+    "rock": 6,
+    "sand": 7,
+    "wetland": 8,
+    "water": 9,
+    "urban": 10,
+    "industrial": 11,
+    "minor_road": 12,
+    "major_road": 13,
+    "farmyard": 14,
+    "rail": 15,
+    "path": 16,
+    "young": 17,
+    "felled": 18,
+    "mixed": 19
+  },
+  "attribution": "Overture Maps Foundation (incl. \u00a9 OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles; Environment Agency LIDAR Composite 2022 (\u00a9 Environment Agency copyright and/or database right 2022); National Forest Inventory \u00a9 Forestry Commission; Priority Habitats Inventory \u00a9 Natural England (Open Government Licence v3.0); Contains modified Copernicus Sentinel data",
+  "imagery": {
+    "pixel": 10,
+    "width": 1241,
+    "height": 959,
+    "scenes": 14
+  },
+  "roads": {
+    "pieces": 1881,
+    "km": 373.7
+  },
+  "boundaries": {
+    "hedgeKm": 216.9,
+    "wallKm": 177.4
+  }
+}

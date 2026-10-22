@@ -1,13 +1,16 @@
 // Screenshots and frame times for the detailed terrain (docs/terrain-detail.md), taken in a real,
 // GPU-backed Chrome window. Start the dev server first (npm run dev), then:
 //
-//   npm i --no-save playwright && node scripts/detail/gpu-shots.mjs [http://localhost:5173/]
+//   npm i --no-save playwright && node scripts/detail/gpu-shots.mjs [http://localhost:5173/] [--views=a,b]
 //
 // Writes docs/images/terrain-detail/<view>.jpg (not committed) and prints frame times as JSON.
 import fs from 'node:fs';
 import { chromium } from 'playwright';
 
-const url = process.argv[2] ?? 'http://localhost:5173/';
+const args = process.argv.slice(2);
+const url = args.find((a) => !a.startsWith('--')) ?? 'http://localhost:5173/';
+// --views=a,b takes only the named views.
+const only = args.find((a) => a.startsWith('--views='))?.slice(8).split(',');
 const out = 'docs/images/terrain-detail';
 fs.mkdirSync(out, { recursive: true });
 
@@ -24,6 +27,11 @@ const VIEWS = [
   { name: 'kielder-walls', lon: -2.375, lat: 55.169, heading: 0.8, height: 0.04 },
   { name: 'kielder-water', lon: -2.56, lat: 55.21, heading: 3.6, height: 0.6 },
   { name: 'dartmoor-coarse', lon: -3.9, lat: 50.55, heading: 3.6, height: 0.06 },
+  // Cliffs (docs/coastal-cliffs.md), seen from the sea.
+  { name: 'tintagel-head', lon: -4.778, lat: 50.671, heading: 1.75, height: 0.05 },
+  { name: 'tintagel-coast', lon: -4.79, lat: 50.69, heading: 2.3, height: 0.15 },
+  { name: 'boscastle-cliffs', lon: -4.72, lat: 50.70, heading: 2.0, height: 0.06 },
+  { name: 'rame-head', lon: -4.222, lat: 50.300, heading: 0.1, height: 0.05 },
 ];
 
 const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--window-size=1600,980'] });
@@ -39,7 +47,7 @@ await page.waitForTimeout(3000);
 await page.screenshot({ path: `${out}/map-overview.jpg`, quality: 85 });
 
 const timings = {};
-for (const v of VIEWS) {
+for (const v of VIEWS.filter((v) => !only || only.includes(v.name))) {
   await page.evaluate((v) => {
     const p = window.projection.toWorld(v.lon, v.lat);
     window.rig.toGround({ x: p.x, y: 0, z: p.z }, { heading: v.heading, height: v.height, instant: true });
