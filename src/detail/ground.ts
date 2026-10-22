@@ -124,8 +124,6 @@ varying vec2 vLocal;
 varying float vHeight;
 /** Surface relief (m) for bump shading, set by surfaceColour. */
 float surfBump;
-/** 1 on lakes, rivers and harbour basins, which reflect the sky (see WATER). */
-float surfWater;
 
 int coverClass(vec2 p) {
   // Beyond the detailed tile (the 1 km surroundings) land is all field patchwork.
@@ -140,7 +138,6 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
   float bumpFade = 1.0 - smoothstep(1.0, 6.0, length(fwidth(p)));
   float relief = fbm(p / 1.3) * 0.25 + vnoise(p / 0.4) * 0.05;
   surfBump = relief * bumpFade;
-  surfWater = 0.0;
   if (k == 1) {
     return patchwork(p, fieldSize, rough);
   }
@@ -161,7 +158,6 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
     // Inland water sits at its own level above the sea plane, so it is shaded here: dark
     // water with wind ripples, lit mostly by the sky it reflects.
     rough = 0.08;
-    surfWater = 1.0;
     surfBump = (vnoise(p / 1.5) * 0.04 + vnoise(p / 6.0 + 3.0) * 0.08) * bumpFade;
     return vec3(0.06, 0.10, 0.11);
   }
@@ -194,7 +190,7 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
     // because the mesh draws the flats as a few large, nearly level triangles: any shading
     // tied straight to their height or normal (a glossy sun glint, a sky mirror) lights whole
     // triangles at once and reads as hard-edged white patches. So the mud is matt and only the
-    // pools mirror the sky (surfWater).
+    // pools are glossy enough to mirror the sky (scene.environment).
     float edge = vHeight + 0.35 * (fbm(p / 30.0) - 0.5) + 0.1 * (fine - 0.5);
     float pool = 1.0 - smoothstep(-0.12, 0.02, edge);
     float wet = 1.0 - smoothstep(0.0, 0.8, edge);
@@ -204,7 +200,6 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
     float wind = vnoise(p / 1.5) * 0.04 + vnoise(p / 6.0 + 3.0) * 0.08;
     surfBump = mix(ripple * 0.015 + fbm(p / 2.0) * 0.05, wind, pool) * bumpFade;
     rough = mix(mix(0.85, 0.6, wet), 0.1, pool);
-    surfWater = 0.6 * pool;
     // Turbid estuary water: brown-grey, lit mostly by the sky it reflects.
     return mix(bed, vec3(0.12, 0.12, 0.10), pool);
   }
@@ -327,18 +322,6 @@ vec3 rockColour(vec3 pos, vec3 n, out float bump, out float rough) {
  * (horizon to zenith, linear, roughly matching the Sky shader after tone mapping) is added
  * by Schlick's Fresnel. Runs after the normal is final.
  */
-const WATER = /* glsl */ `
-if (surfWater > 0.0) {
-  vec3 v = normalize(vViewPosition);
-  vec3 up = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz);
-  vec3 r = reflect(-v, normal);
-  float cosV = clamp(dot(normal, v), 0.0, 1.0);
-  float fresnel = 0.02 + 0.98 * pow(1.0 - cosV, 5.0);
-  vec3 sky = mix(vec3(1.05, 1.15, 1.3), vec3(0.35, 0.6, 1.0), smoothstep(0.0, 0.6, dot(r, up)));
-  totalEmissiveRadiance += surfWater * fresnel * sky;
-}
-`;
-
 /** Fragment colour, roughness and bump: the land-cover surface, with rock over steep faces. */
 const SURFACE_WITH_ROCK = /* glsl */ `
 float surfRough;
@@ -350,7 +333,6 @@ if (rockW > 0.0) {
   surf = mix(surf, rock, rockW);
   surfRough = mix(surfRough, rockRough, rockW);
   surfBump = mix(surfBump, rockBump, rockW);
-  surfWater *= 1.0 - rockW;
 }
 diffuseColor.rgb = pow(surf, vec3(2.2));
 `;
@@ -472,8 +454,7 @@ export function createGround(area: Area): Ground {
       .replace('#include <common>', `#include <common>\n${NOISE}\n${FIELDS}\n${SURFACE}\n${ROCK}`)
       .replace('#include <color_fragment>', `#include <color_fragment>\n${SURFACE_WITH_ROCK}`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = surfRough;')
-      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${BUMP}`)
-      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${WATER}`);
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>\n${BUMP}`);
   };
   const mesh = new THREE.Mesh(geometry, material);
   mesh.receiveShadow = true;
