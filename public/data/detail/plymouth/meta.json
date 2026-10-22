@@ -11,7 +11,7 @@
   "coverWidth": 4370,
   "coverHeight": 3225,
   "minHeight": -19.769993711566162,
-  "maxHeight": 296.6815184273999,
+  "maxHeight": 308.6214599609375,
   "buildings": 97273,
   "buildingStats": {
     "total": 97788,
@@ -20,18 +20,18 @@
     "osm_height": 6878,
     "ml": 17080,
     "lidar": 47210,
-    "lidar_rejected": 5969
+    "lidar_rejected": 5968
   },
   "trees": 6942,
   "mesh": {
     "step": 4.0,
-    "vertices": 375545,
-    "triangles": 747204,
+    "vertices": 811618,
+    "triangles": 1618986,
     "maxError": 0.5
   },
   "hasCoast": true,
   "coast": {
-    "cliffShare": 0.476
+    "cliffShare": 0.444
   },
   "classes": {
     "sea": 0,

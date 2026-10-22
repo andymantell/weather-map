@@ -10,8 +10,8 @@
   "coverTexel": 4,
   "coverWidth": 3102,
   "coverHeight": 2398,
-  "minHeight": -31.94215905625223,
-  "maxHeight": 307.1801403778263,
+  "minHeight": -200.0,
+  "maxHeight": 307.5950012207031,
   "buildings": 3462,
   "buildingStats": {
     "total": 3692,
@@ -23,9 +23,15 @@
     "lidar_rejected": 102
   },
   "trees": 6,
+  "mesh": {
+    "step": 5.0,
+    "vertices": 167654,
+    "triangles": 330678,
+    "maxError": 0.5
+  },
   "hasCoast": true,
   "coast": {
-    "cliffShare": 0.951
+    "cliffShare": 0.508
   },
   "classes": {
     "sea": 0,
