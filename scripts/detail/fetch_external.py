@@ -231,10 +231,19 @@ def wales_tile(url):
             return None
         path.parent.mkdir(parents=True, exist_ok=True)
         ba.write_atomic(path, lambda p: p.write_bytes(data))
-    with rasterio.open(path) as src:
-        a = src.read(1).astype(np.float32)
-        if src.nodata is not None:
-            a[a == src.nodata] = np.nan
+    for attempt in range(10):
+        try:
+            with rasterio.open(path) as src:
+                a = src.read(1).astype(np.float32)
+                nodata = src.nodata
+            break
+        except rasterio.errors.RasterioIOError:
+            # Windows won't open a file while another worker is moving its copy of it into place.
+            if attempt == 9:
+                raise
+            time.sleep(1)
+    if nodata is not None:
+        a[a == nodata] = np.nan
     a[a < -1000] = np.nan
     return a
 
