@@ -33,7 +33,7 @@ CACHE = ROOT / ".cache" / "detail" / "imagery"
 BUCKET = "sentinel-cogs/sentinel-s2-l2a-cogs"
 
 # Sentinel-2 (MGRS) tile holding each area.
-TILES = {"plymouth": "30/U/VA", "kielder": "30/U/WG"}
+TILES = {"plymouth": "30/U/VA", "kielder": "30/U/WG", "tintagel": "30/U/UB"}
 MONTHS = [(y, m) for y in (2023, 2024, 2025) for m in (5, 6, 7, 8, 9)]
 MAX_CLOUD = 40  # % of the tile
 MAX_SCENES = 14

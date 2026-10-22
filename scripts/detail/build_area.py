@@ -33,7 +33,7 @@ import pyarrow.parquet as pq
 import shapely
 import shapely.geometry
 from PIL import Image, ImageDraw
-from scipy.ndimage import distance_transform_edt
+from scipy.ndimage import distance_transform_edt, gaussian_filter, maximum_filter
 from pyproj import Transformer
 
 PROJ = "+proj=laea +lat_0=54.9 +lon_0=-2.5 +x_0=0 +y_0=0 +ellps=GRS80 +units=m"
@@ -44,6 +44,8 @@ AREAS = {
     # Lon/lat box, height grid spacing (m), cover texel size (m).
     "plymouth": dict(bbox=(-4.25, 50.33, -4.0, 50.45), spacing=20, texel=4),
     "kielder": dict(bbox=(-2.75, 55.1, -2.35, 55.33), spacing=25, texel=8),
+    # North Cornwall, Tintagel to Boscastle: a cliffed coast to test the shoreline against.
+    "tintagel": dict(bbox=(-4.80, 50.63, -4.62, 50.72), spacing=10, texel=4),
 }
 
 # Land-cover classes written to cover.png; src/detail/ground.ts mirrors these.
@@ -92,6 +94,12 @@ def external_features(area_name, kind, table):
 UPLAND_SHRUB = 200  # temporary class while rasterising
 UPLAND_M = 250
 
+# The shoreline only pulls land down to the waterline where the land behind the coast is low.
+# Backshore height (highest ground within BACKSHORE_M inland) from CLIFF_LOW_M to CLIFF_HIGH_M
+# fades from that smooth shore to a cliff, where the heights are kept as measured.
+BACKSHORE_M = 40
+CLIFF_LOW_M, CLIFF_HIGH_M = 4.0, 12.0
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE = ROOT / ".cache" / "detail"
 EXTERNAL = CACHE / "external"
@@ -138,7 +146,7 @@ def fetch_tile(z, x, y):
     return rgb[..., 0] * 256 + rgb[..., 1] + rgb[..., 2] / 256 - 32768
 
 
-def sample_elevation(lon, lat, z=13):
+def sample_elevation(lon, lat, z=15):
     n = 2 ** z
     px = (lon + 180.0) / 360.0 * n
     lat_r = np.radians(lat)
@@ -153,6 +161,27 @@ def sample_elevation(lon, lat, z=13):
     fx, fy = px - ix, py - iy
     return (mosaic[iy, ix] * (1 - fx) * (1 - fy) + mosaic[iy, ix + 1] * fx * (1 - fy)
             + mosaic[iy + 1, ix] * (1 - fx) * fy + mosaic[iy + 1, ix + 1] * fx * fy)
+
+
+def cliffness(heights, d, spacing, cliff_lines, raster, grid_index):
+    """0 on low shores, 1 on cliffs, from the backshore height and OSM cliff lines."""
+    r = BACKSHORE_M / spacing
+    k = math.ceil(r)
+    yy, xx = np.mgrid[-k:k + 1, -k:k + 1]
+    back = maximum_filter(np.where(d > 0, heights, -1e6), footprint=xx ** 2 + yy ** 2 <= r * r, mode="nearest")
+    c = np.clip((back - CLIFF_LOW_M) / (CLIFF_HIGH_M - CLIFF_LOW_M), 0, 1)
+    c = c * c * (3 - 2 * c)
+    if cliff_lines:
+        # Mapped cliffs near the sea count as cliffs whatever the heights say.
+        x0, y1, texel, cw, ch = raster
+        mask = Raster(x0, y1, texel, cw, ch, 0)
+        mask.hole_fill = 0
+        for g in cliff_lines:
+            mask.line(g, 1, texel)
+        near = distance_transform_edt(np.asarray(mask.img) == 0)[grid_index] * texel
+        c = np.maximum(c, ((near < 30) & (np.abs(d) < 80)).astype(float))
+    # Smooth along the coast so the shore type never flips between neighbouring points.
+    return np.clip(gaussian_filter(c, 25 / spacing), 0, 1)
 
 
 class Raster:
@@ -386,7 +415,15 @@ def main(area_name):
         d = signed[gj, gi]
         far = np.where(d > 0, np.maximum(heights, 0.5), np.minimum(heights, -2.0))
         t = np.clip((np.abs(d) - 20) / 20, 0, 1)
-        heights = d * 0.08 * (1 - t) + far * t
+        shore = d * 0.08 * (1 - t) + far * t
+        # On cliffs keep the measured heights, only pushing the sea side under water so the
+        # face drops straight in at the mapped coastline (see docs/coastal-cliffs.md).
+        cliff_lines = [g for g, s, c in zip(land_geoms, land_sub, land_cls) if s == "physical" and c == "cliff"]
+        c = cliffness(heights, d, spacing, cliff_lines, (x0, y1, texel, cw, ch), (gj, gi))
+        heights = shore * (1 - c) + far * c
+        coast_cells = np.abs(d) < 2 * spacing
+        coast_stats = {"cliffShare": round(float((c[coast_cells] > 0.5).mean()), 3) if coast_cells.any() else 0}
+        print("coast", coast_stats)
     v = np.round(heights * 4) / 4 + 32768
     rr = np.floor(v / 256)
     gg = np.floor(v - rr * 256)
@@ -476,7 +513,7 @@ def main(area_name):
         "coverTexel": texel, "coverWidth": cw, "coverHeight": ch,
         "minHeight": float(heights.min()), "maxHeight": float(heights.max()),
         "buildings": count, "buildingStats": stats, "trees": len(tbuf) // 12,
-        "hasCoast": has_coast, "classes": CLASSES,
+        "hasCoast": has_coast, **({"coast": coast_stats} if has_coast else {}), "classes": CLASSES,
         "attribution": "Overture Maps Foundation (incl. © OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles",
     }
     extra = []
