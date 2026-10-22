@@ -74,7 +74,10 @@ interface Tile {
 export interface DetailTerrain {
   group: THREE.Group;
   rects: THREE.Vector4[];
-  /** Each tile's drawn ground heights (m, true scale, sea bed cut at -2 m) and grid, for the sea's surf. */
+  /**
+   * Each tile's drawn ground for the sea's surf, per sample: height (m, true scale, sea bed cut
+   * at -2 m) then estuary shelter (0-1), and its grid.
+   */
   grounds: { heights: Float32Array; width: number; height: number; x0: number; yMax: number; spacing: number; hasCoast: boolean }[];
   /** Drawn ground height (km, exaggerated) inside a tile, or null outside every tile. */
   terrainAt(x: number, z: number): number | null;
@@ -105,16 +108,50 @@ function blendEdges(area: Area, coarse: GroundSampler, coarseScale: number) {
   if (p) for (let k = 0; k < p.length; k += 3) p[k + 1] = blend(p[k], p[k + 2], p[k + 1]);
 }
 
-/** The tile's heights as the sea should see them: the shore only (see grounds). */
+// Estuary shelter: full within SHELTER_NEAR m of tidal flats or saltmarsh, gone by SHELTER_FAR.
+const SHELTER_NEAR = 100;
+const SHELTER_FAR = 300;
+
+/**
+ * The tile's ground as the sea should see it (see grounds), interleaved per sample: the shore
+ * height, then shelter (0-1), 1 in estuaries, where the wave model's sea doesn't reach and
+ * no surf breaks.
+ */
 function seaHeights(area: Area): Float32Array {
   const { meta, heights } = area;
+  const { width, height, spacing } = meta;
   const flats = meta.classes.intertidal;
-  const out = new Float32Array(heights.length);
-  for (let j = 0; j < meta.height; j++) {
-    for (let i = 0; i < meta.width; i++) {
-      const k = j * meta.width + i;
-      const flat = flats !== undefined && coverAt(area, i * meta.spacing, j * meta.spacing) === flats;
-      out[k] = flat ? 1 : Math.max(heights[k], -2);
+  const marsh = meta.classes.saltmarsh;
+  const out = new Float32Array(heights.length * 2);
+  // Chamfer distance (m) to the nearest flats or saltmarsh sample.
+  const dist = new Float32Array(heights.length).fill(1e9);
+  for (let j = 0; j < height; j++) {
+    for (let i = 0; i < width; i++) {
+      const k = j * width + i;
+      const c = flats === undefined ? -1 : coverAt(area, i * spacing, j * spacing);
+      if (c === flats || (marsh !== undefined && c === marsh)) dist[k] = 0;
+      out[2 * k] = c === flats ? 1 : Math.max(heights[k], -2);
+    }
+  }
+  const diag = spacing * Math.SQRT2;
+  for (let j = 0; j < height; j++) {
+    for (let i = 0; i < width; i++) {
+      const k = j * width + i;
+      if (i > 0) dist[k] = Math.min(dist[k], dist[k - 1] + spacing);
+      if (j > 0) dist[k] = Math.min(dist[k], dist[k - width] + spacing);
+      if (i > 0 && j > 0) dist[k] = Math.min(dist[k], dist[k - width - 1] + diag);
+      if (i < width - 1 && j > 0) dist[k] = Math.min(dist[k], dist[k - width + 1] + diag);
+    }
+  }
+  for (let j = height - 1; j >= 0; j--) {
+    for (let i = width - 1; i >= 0; i--) {
+      const k = j * width + i;
+      if (i < width - 1) dist[k] = Math.min(dist[k], dist[k + 1] + spacing);
+      if (j < height - 1) dist[k] = Math.min(dist[k], dist[k + width] + spacing);
+      if (i < width - 1 && j < height - 1) dist[k] = Math.min(dist[k], dist[k + width + 1] + diag);
+      if (i > 0 && j < height - 1) dist[k] = Math.min(dist[k], dist[k + width - 1] + diag);
+      const t = Math.min(Math.max((dist[k] - SHELTER_NEAR) / (SHELTER_FAR - SHELTER_NEAR), 0), 1);
+      out[2 * k + 1] = 1 - t * t * (3 - 2 * t);
     }
   }
   return out;
@@ -337,8 +374,8 @@ export async function createDetailTerrain(
   // The sea finds the coast from these heights (height over gradient) and shoals towards it,
   // so it gets the shore only: the sea bed below 2 m is a made-up shelf (build_area.py
   // sea_bed) whose slope it would read as coast and draw as rings of surf.
-  // Tidal flats and creeks count as land, so water left in their channels lies calm instead
-  // of breaking surf against every mud bank.
+  // Tidal flats and creeks count as land, and estuaries are sheltered, so water left in their
+  // channels lies calm instead of breaking surf against every mud bank.
   const grounds = tiles.map(({ area }) => ({
     heights: seaHeights(area),
     width: area.meta.width,

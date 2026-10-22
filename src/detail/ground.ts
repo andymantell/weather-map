@@ -189,15 +189,24 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
     return mix(vec3(0.10, 0.19, 0.08), vec3(0.19, 0.29, 0.11), n * 0.7 + fine * 0.3);
   }
   if (k == 20) {
-    // Tidal mud and sand flats at mid tide: ripple-marked, glossy and wetter towards the
-    // waterline, mirroring the sky (surfWater); the channels lie under the sea plane.
-    float wet = 1.0 - smoothstep(0.05, 0.6, vHeight);
-    vec3 bed = mix(vec3(0.27, 0.24, 0.20), vec3(0.42, 0.38, 0.29), smoothstep(0.3, 0.7, fbm(p / 70.0)));
+    // Tidal mud and sand flats at mid tide: damp, ripple-marked mud with pools and creek beds
+    // holding water where the flats dip below the waterline. The edge is broken up with noise
+    // because the mesh draws the flats as a few large, nearly level triangles: any shading
+    // tied straight to their height or normal (a glossy sun glint, a sky mirror) lights whole
+    // triangles at once and reads as hard-edged white patches. So the mud is matt and only the
+    // pools mirror the sky (surfWater).
+    float edge = vHeight + 0.35 * (fbm(p / 30.0) - 0.5) + 0.1 * (fine - 0.5);
+    float pool = 1.0 - smoothstep(-0.12, 0.02, edge);
+    float wet = 1.0 - smoothstep(0.0, 0.8, edge);
+    vec3 bed = mix(vec3(0.30, 0.27, 0.22), vec3(0.44, 0.40, 0.31), smoothstep(0.3, 0.7, fbm(p / 70.0)));
+    bed *= (0.85 + 0.25 * n) * mix(1.0, 0.82, wet);
     float ripple = sin(dot(p, vec2(0.9, 0.4)) * 2.2 + fbm(p / 5.0) * 6.0);
-    surfBump = (ripple * 0.015 + fbm(p / 2.0) * 0.05) * bumpFade;
-    rough = mix(0.45, 0.15, wet);
-    surfWater = 0.08 + 0.3 * wet;
-    return bed * (0.85 + 0.25 * n) * mix(1.0, 0.75, wet);
+    float wind = vnoise(p / 1.5) * 0.04 + vnoise(p / 6.0 + 3.0) * 0.08;
+    surfBump = mix(ripple * 0.015 + fbm(p / 2.0) * 0.05, wind, pool) * bumpFade;
+    rough = mix(mix(0.85, 0.6, wet), 0.1, pool);
+    surfWater = 0.6 * pool;
+    // Turbid estuary water: brown-grey, lit mostly by the sky it reflects.
+    return mix(bed, vec3(0.12, 0.12, 0.10), pool);
   }
   if (k == 21) {
     // Saltmarsh: tussocky green-brown sward.

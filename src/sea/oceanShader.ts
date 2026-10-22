@@ -44,8 +44,8 @@ export const fragmentPars = /* glsl */ `
   uniform vec4 uDepthGrid;  // first sample x, first sample y, spacing (metres), unused
                             // R = real height, G = terrain mesh height (see ocean.ts)
   uniform vec2 uDepthSize;  // samples
-  // Detailed terrain tiles (src/detail/): drawn height (m) on their own fine grids, so the surf
-  // follows the coastline they draw instead of the coarse one.
+  // Detailed terrain tiles (src/detail/): drawn height (m, R) on their own fine grids, so the surf
+  // follows the coastline they draw instead of the coarse one, and estuary shelter (G, 0-1).
   uniform sampler2D uDetailDepth0;
   uniform sampler2D uDetailDepth1;
   uniform vec4 uDetailGrid[2]; // first sample x, first sample y, spacing (metres), 1 if in use
@@ -205,6 +205,7 @@ export const fragmentMain = /* glsl */ `
       texture2D(uDepth, depthUv + vec2(0.0, texel.y)).g - texture2D(uDepth, depthUv - vec2(0.0, texel.y)).g
     ) / (2.0 * uDepthGrid.z);
     float coastDistance = -ground.g / max(length(meshGrad), 1e-4);
+    float shelter = 0.0;
     for (int i = 0; i < 2; i++) {
       vec4 grid = uDetailGrid[i];
       vec2 size = uDetailSize[i];
@@ -212,7 +213,9 @@ export const fragmentMain = /* glsl */ `
       if (grid.w < 0.5 || any(lessThan(cell, vec2(1.0))) || any(greaterThan(cell, size - 2.0))) continue;
       vec2 uv = (cell + 0.5) / size;
       vec2 t = 1.0 / size;
-      float h = i == 0 ? texture2D(uDetailDepth0, uv).r : texture2D(uDetailDepth1, uv).r;
+      vec2 hs0 = i == 0 ? texture2D(uDetailDepth0, uv).rg : texture2D(uDetailDepth1, uv).rg;
+      float h = hs0.r;
+      shelter = hs0.g;
       vec2 g = i == 0
         ? vec2(texture2D(uDetailDepth0, uv + vec2(t.x, 0.0)).r - texture2D(uDetailDepth0, uv - vec2(t.x, 0.0)).r,
                texture2D(uDetailDepth0, uv + vec2(0.0, t.y)).r - texture2D(uDetailDepth0, uv - vec2(0.0, t.y)).r)
@@ -274,7 +277,7 @@ export const fragmentMain = /* glsl */ `
     float surfNoise = seaFbm(vec2(coastDistance / (0.35 * surfWidth + 1.0) - t * 0.15, seaNoise(mapPos / 400.0) * 6.0));
     float surf = (1.0 - smoothstep(0.0, surfWidth + footprintMetres, coastDistance))
                * surfWidth / (surfWidth + footprintMetres)
-               * smoothstep(0.25, 0.6, surfNoise) * step(0.0, coastDistance) * uSurf;
+               * smoothstep(0.25, 0.6, surfNoise) * step(0.0, coastDistance) * uSurf * (1.0 - shelter);
     foam = clamp(max(foam, surf), 0.0, 1.0);
 
     // Water body: absorb along the view path so shallow seabed shows through.
