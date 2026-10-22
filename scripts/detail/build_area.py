@@ -433,8 +433,15 @@ def main(area_name):
         roof = 0
         ring = g.simplify(0.4)
         rect = g.minimum_rotated_rectangle
-        if (row["class"] in RESIDENTIAL and 25 < g.area < 300 and h < 12
-                and g.area / max(rect.area, 1e-6) > 0.82):
+        house = row["class"] in RESIDENTIAL and 25 < g.area < 300 and g.area / max(rect.area, 1e-6) > 0.82
+        if house and measured is not None:
+            # Lidar's 90th percentile is near the ridge, but the renderer takes h as the eave and
+            # adds the gable (min(0.45 × short side, 4.5 m), src/detail/buildings.ts) on top.
+            edges = np.diff(np.asarray(rect.exterior.coords)[:3], axis=0)
+            gable = min(0.45 * float(np.linalg.norm(edges, axis=1).min()), 4.5)
+            if measured - gable < 12:
+                h = max(measured - gable, 2.5)
+        if house and h < 12:
             ring, roof = rect, 1  # simple house: gable roof on its oriented rectangle
         coords = np.asarray(ring.exterior.coords)[:-1]
         if not ring.exterior.is_ccw:
