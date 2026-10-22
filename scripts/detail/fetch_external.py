@@ -53,7 +53,8 @@ def get(url, params=None, tries=4):
             with urllib.request.urlopen(url, timeout=120) as r:
                 return r.read()
         except Exception as error:  # noqa: BLE001 - retry any network failure
-            if attempt == tries - 1:
+            # A 4xx/5xx from the WCS outside its coverage won't change on retry.
+            if attempt == tries - 1 or getattr(error, "code", 0) in (400, 404, 500):
                 raise RuntimeError(f"{url}: {error}") from error
             time.sleep(2 ** (attempt + 1))
 
@@ -95,11 +96,18 @@ def fetch_lidar(area, bbox):
     dsm_cov, dtm_cov = coverage_id(DSM_WCS), coverage_id(DTM_WCS)
     w, h = x1 - x0, y1 - y0
     ndsm = np.full((h, w), -1, np.int16)
+    missing = 0
     for cy in range(y0, y1, CHUNK):
         for cx in range(x0, x1, CHUNK):
             ex, ey = min(cx + CHUNK, x1), min(cy + CHUNK, y1)
-            dsm = wcs_chunk(DSM_WCS, dsm_cov, cx, cy, ex, ey)
-            dtm = wcs_chunk(DTM_WCS, dtm_cov, cx, cy, ex, ey)
+            try:
+                dsm = wcs_chunk(DSM_WCS, dsm_cov, cx, cy, ex, ey)
+                dtm = wcs_chunk(DTM_WCS, dtm_cov, cx, cy, ex, ey)
+            except RuntimeError as error:
+                # The service errors outside England (e.g. Kielder's Scottish edge): leave nodata.
+                print(f"  lidar chunk {cx},{cy} skipped: {str(error)[-80:]}")
+                missing += 1
+                continue
             hh, ww = min(dsm.shape[0], dtm.shape[0], ey - cy), min(dsm.shape[1], dtm.shape[1], ex - cx)
             d = np.clip((dsm[:hh, :ww] - dtm[:hh, :ww]) * 10, -1, 32000)
             d = np.where(np.isnan(d), -1, d).astype(np.int16)
@@ -112,7 +120,7 @@ def fetch_lidar(area, bbox):
                        crs="EPSG:27700", transform=from_origin(x0, y1, 1, 1), nodata=-1,
                        compress="deflate", predictor=2, tiled=True) as dst:
         dst.write(ndsm, 1)
-    print("wrote", out)
+    print("wrote", out, f"({missing} chunks without data)")
 
 
 def fetch_features(url, bbox, out):

@@ -418,7 +418,8 @@ def main(area_name):
     stats["lidar"] = 0
     buf = bytearray()
     count = 0
-    for g, row in zip(geoms, rows):
+    osm = [src[0]["dataset"] == "OpenStreetMap" for src in bt["sources"].to_pylist()]
+    for g, row, from_osm in zip(geoms, rows, osm):
         if g.geom_type == "MultiPolygon":
             g = max(g.geoms, key=lambda p: p.area)
         if g.geom_type != "Polygon" or g.area < 8:
@@ -426,7 +427,7 @@ def main(area_name):
         c = g.centroid
         if not (x0 <= c.x <= x1 and y0 <= c.y <= y1):
             continue
-        measured = None if row["height"] is not None and row["height"] > 1 else lidar.height(g)
+        measured = None if from_osm and row["height"] is not None and row["height"] > 1 else lidar.height(g)
         h = measured if measured is not None else building_height(row, g.area)
         stats["lidar"] += measured is not None
         roof = 0
@@ -454,6 +455,8 @@ def main(area_name):
             tbuf += struct.pack("<fff", p.x - x0, p.y - y1, height_at(p.x, p.y))
     (out / "trees.bin").write_bytes(bytes(tbuf))
 
+    # Keys written by the other build scripts (imagery, masses, boundaries, roads) survive a rebuild.
+    old = json.loads((out / "meta.json").read_text()) if (out / "meta.json").exists() else {}
     meta = {
         "proj": PROJ, "xMin": x0, "xMax": x1, "yMin": y0, "yMax": y1,
         "spacing": spacing, "width": len(xs), "height": len(ys),
@@ -472,6 +475,9 @@ def main(area_name):
         extra.append("Priority Habitats Inventory © Natural England")
     if extra:
         meta["attribution"] += "; " + "; ".join(extra) + " (Open Government Licence v3.0)"
+    if "imagery" in old:
+        meta["attribution"] += "; Contains modified Copernicus Sentinel data"
+    meta.update({k: v for k, v in old.items() if k not in meta})
     (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
     print(json.dumps(meta))
 

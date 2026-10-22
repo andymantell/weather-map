@@ -18,7 +18,8 @@
     "osm": 725,
     "osm_levels": 25,
     "osm_height": 326,
-    "ml": 452
+    "ml": 452,
+    "lidar": 0
   },
   "trees": 478,
   "hasCoast": true,
@@ -39,7 +40,10 @@
     "major_road": 13,
     "farmyard": 14,
     "rail": 15,
-    "path": 16
+    "path": 16,
+    "young": 17,
+    "felled": 18,
+    "mixed": 19
   },
   "attribution": "Overture Maps Foundation (incl. \u00a9 OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles; Contains modified Copernicus Sentinel data",
   "imagery": {

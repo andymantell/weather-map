@@ -23,7 +23,7 @@ import numpy as np
 import shapely
 from shapely.strtree import STRtree
 
-from build_area import AREAS, ROOT, building_height, overture, project
+from build_area import AREAS, ROOT, LidarHeights, building_height, overture, project
 
 # Closing radius (m) for each level of detail.
 LEVELS = (10, 18)
@@ -48,7 +48,19 @@ def main(area_name):
     geoms = project(bt["geometry"].to_numpy(zero_copy_only=False))
     keep = [i for i, g in enumerate(geoms) if g.geom_type in ("Polygon", "MultiPolygon") and g.area >= 8]
     foot = shapely.make_valid(geoms[keep])
-    heights = np.array([building_height(rows[i], geoms[i].area) for i in keep])
+    # Same precedence as build_area.py: OSM height tag, then lidar, then the estimate.
+    lidar = LidarHeights(area_name)
+    osm = [s[0]["dataset"] == "OpenStreetMap" for s in bt["sources"].to_pylist()]
+
+    def height(i):
+        row = rows[i]
+        if not (osm[i] and row["height"] is not None and row["height"] > 1):
+            measured = lidar.height(geoms[i])
+            if measured is not None:
+                return measured
+        return building_height(row, geoms[i].area)
+
+    heights = np.array([height(i) for i in keep])
     areas = shapely.area(foot)
     centroids = shapely.centroid(foot)
     tree = STRtree(centroids)
