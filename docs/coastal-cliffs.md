@@ -232,6 +232,33 @@ build script changes go through the terrain, towns and forests work.
 5. **Estuaries:** intertidal class and tidal water level (section 6), tested on a Morecambe Bay
    or Severn tile.
 
+## 8. What's built (stages 1 and 2, 2026-10-22)
+
+Andy approved stages 1 and 2, and liked the Tintagel result.
+
+- **Heights** come from AWS Terrain Tiles at zoom 15 (`sample_elevation` in
+  `scripts/detail/build_area.py`), with retries because a tile set is now hundreds of tiles.
+- **Cliff-aware shoreline:** `cliffness()` turns the backshore height (highest ground within
+  40 m inland, 4 m to 12 m) and OSM cliff lines within 80 m of the sea into a weight smoothed
+  along the coast. The weight blends from the old smooth shore to measured heights. `meta.json`
+  records `coast.cliffShare`: 0.94 at Tintagel, 0.43 at Plymouth.
+- **Sea bed:** `sea_bed()` replaces the tiles' blocky bathymetry, which showed as stair steps
+  and seams through the water. It takes the deeper of a 400 m blur of the tiles and a shelf
+  falling to about 20 m within a kilometre. The sea shader works out coast distance as height
+  over gradient, so it would read the shelf as coast and draw rings of surf. It therefore gets
+  the tile heights cut at -2 m (`grounds` in `src/detail/detailTerrain.ts`).
+- **Sea depth slots:** the sea's two slots for detailed ground now take the two coastal tiles
+  nearest the camera (`feedSeaGrounds` in `src/main.ts`), not the first two tiles in the list.
+- **Rock shading:** `ROCK` in `src/detail/ground.ts`. Ground steeper than about 38 to 58
+  degrees (true scale) gets triplanar rock with ragged edges: strata, joints, lichen 2 to 10 m
+  up, and a wet, weedy foot.
+- **New test tile `tintagel`**, from Tintagel to Boscastle, at 10 m spacing. It has
+  Environment Agency lidar heights, NFI, PHI, imagery, roads and walls, and views in
+  `gpu-shots.mjs`.
+
+Still open: stages 3 to 5. Kielder hasn't been rebuilt with zoom 15 yet. The z15 tiles show
+faint straight seams inland at Tintagel, which are probably joins in the source mosaic.
+
 ## Sources
 
 - [Tilezen Joerd data attribution](https://github.com/tilezen/joerd/blob/master/docs/attribution.md)
