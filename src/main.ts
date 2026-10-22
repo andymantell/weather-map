@@ -5,7 +5,6 @@ import { loadHeightmap } from './heightmap';
 import { Projection } from './projection';
 import { createRainPlane, loadRainField } from './rain';
 import { createOcean, mountSeaControls } from './sea/ocean';
-import { TERRAIN_BEFORE } from './detail/area';
 import { createDetailTerrain, type DetailTerrain } from './detail/detailTerrain';
 import { createSea, createTerrain, setDetailRects } from './terrain';
 import { createCloudLayer, loadUkvClouds, mountCloudControls, type CloudLayer } from './weather/clouds';
@@ -18,14 +17,6 @@ const loading = document.getElementById('loading')!;
 const exaggerationInput = document.getElementById('exaggeration') as HTMLInputElement;
 const exaggerationValue = document.getElementById('exaggeration-value')!;
 const reliefEasingInput = document.getElementById('relief-easing') as HTMLInputElement;
-const terrainBeforeInput = document.getElementById('terrain-before') as HTMLInputElement;
-terrainBeforeInput.checked = TERRAIN_BEFORE;
-terrainBeforeInput.addEventListener('change', () => {
-  const url = new URL(location.href);
-  if (terrainBeforeInput.checked) url.searchParams.set('terrain', 'before');
-  else url.searchParams.delete('terrain');
-  location.href = url.toString();
-});
 const rainInput = document.getElementById('rain') as HTMLInputElement;
 const rainInfo = document.getElementById('rain-info')!;
 

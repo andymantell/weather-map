@@ -40,18 +40,9 @@ export interface Area {
   sizeZ: number;
 }
 
-/**
- * `?terrain=before` loads the tiles' buildings, street blocks, land cover and trees as they
- * were before the lidar heights, Forest Inventory and habitat data went in
- * (public/data/detail-before/), for comparing the two.
- */
-export const TERRAIN_BEFORE = new URLSearchParams(location.search).get('terrain') === 'before';
-const BEFORE_FILES = new Set(['meta.json', 'cover.png', 'buildings.bin', 'trees.bin', 'masses-10.bin', 'masses-18.bin']);
-
-/** URL of one of an area's data files, honouring TERRAIN_BEFORE. */
+/** URL of one of an area's data files. */
 export function detailUrl(baseUrl: string, name: string, file: string): string {
-  const set = TERRAIN_BEFORE && BEFORE_FILES.has(file) ? 'detail-before' : 'detail';
-  return `${baseUrl}data/${set}/${name}/${file}`;
+  return `${baseUrl}data/detail/${name}/${file}`;
 }
 
 async function pixels(url: string): Promise<Uint8ClampedArray> {

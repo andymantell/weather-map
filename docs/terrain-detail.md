@@ -86,9 +86,9 @@ slider's value at 20 km down to 1.5× at 200 m and below.
 ## Lidar heights, Forest Inventory and habitats (2026-10-22)
 
 Both tiles were rebuilt with the government datasets from `fetch_external.py` (see
-[terrain-data-sources.md](terrain-data-sources.md)). The previous data is kept in
-`public/data/detail-before/`; tick "Old terrain data" in the app (or add `?terrain=before`) to
-compare. Measured on Andy's laptop (Radeon RX 7700S).
+[terrain-data-sources.md](terrain-data-sources.md)). Andy compared them with the previous data
+and kept the new data (2026-10-22); the old set and its comparison toggle were then removed
+(they are in git history before that date). Measured on Andy's laptop (Radeon RX 7700S).
 
 - **Forests (NFI) and habitats (PHI):** Kielder changed most. Conifer went from 60.8% of the tile
   to 23.1%, with felled 30.5%, young 9.8%, heath 17.2% and wetland 11.3%. The 30% felled is what
