@@ -22,6 +22,8 @@ const VIEWS = [
   { name: 'north-plough', ...HOE, heading: 0.1, pitch: 0.35, time: '2026-10-22T22:00' },
   { name: 'orion-rising', ...HOE, heading: 2.2, pitch: 0.4, time: '2026-10-23T00:30' },
   { name: 'pleiades-zoom', ...HOE, heading: 2.41, pitch: 1.02, time: '2026-10-23T00:30', fov: 12 },
+  { name: 'milkyway-cygnus', ...HOE, heading: 3.1, pitch: 1.1, time: '2026-09-10T22:00', fov: 75 },
+  { name: 'milkyway-sagittarius', ...HOE, heading: 3.4, pitch: 0.3, time: '2026-08-12T22:00', fov: 60 },
   { name: 'moonless-overhead', ...HOE, heading: 3.0, pitch: 1.2, time: '2026-11-10T02:00', fov: 75 },
 ].filter((v) => !only || only.includes(v.name));
 

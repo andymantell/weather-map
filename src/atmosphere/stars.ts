@@ -96,6 +96,11 @@ export class StarField {
     uStarDir: { value: floatTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat) },
     uStarColour: { value: floatTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat) },
     uStarsReady: { value: 0 },
+    /** The Milky Way's glow (public/data/milkyway.jpg), log-encoded radiance. */
+    uMilkyWay: { value: new THREE.Texture() },
+    /** x, y: log2 of the radiance at codes 0 and 1; z: which way right ascension runs across the map. */
+    uMilkyWayRange: { value: new THREE.Vector3() },
+    uMilkyWayReady: { value: 0 },
     /** xyz: J2000 direction; w unused. */
     uBrightDir: { value: Array.from({ length: BRIGHT_COUNT }, () => new THREE.Vector4()) },
     /** rgb: illuminance relative to the sun's; w: how much it twinkles (1 for a star). */
@@ -111,6 +116,32 @@ export class StarField {
       })
       .then((buffer) => this.build(buffer))
       .catch((error) => console.warn('Star catalogue failed to load', error));
+    this.loadMilkyWay(`${import.meta.env.BASE_URL}data/milkyway`);
+  }
+
+  /** The Milky Way baked by scripts/stars/build_milkyway.py; until it loads, the sky keeps its procedural band. */
+  private loadMilkyWay(base: string): void {
+    fetch(`${base}.json`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`${r.status} ${base}.json`);
+        return r.json() as Promise<{ log2Min: number; log2Max: number; raSign: number }>;
+      })
+      .then(async (meta) => {
+        const texture = await new THREE.TextureLoader().loadAsync(`${base}.jpg`);
+        // Log-encoded data, not colour: no sRGB decode. Mipmaps for wide views; the shader picks the level itself,
+        // as the derivatives jump where right ascension wraps.
+        texture.colorSpace = THREE.NoColorSpace;
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.minFilter = THREE.LinearMipmapLinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.needsUpdate = true;
+        const u = this.uniforms;
+        u.uMilkyWay.value = texture;
+        u.uMilkyWayRange.value.set(meta.log2Min, meta.log2Max, meta.raSign);
+        u.uMilkyWayReady.value = 1;
+      })
+      .catch((error) => console.warn('Milky Way map failed to load', error));
   }
 
   /** Moves the planets to the given moment (they shift by a fraction of a degree a day, so once an hour will do). */

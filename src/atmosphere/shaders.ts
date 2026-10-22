@@ -452,6 +452,9 @@ uniform highp sampler2D uStarCells;
 uniform highp sampler2D uStarDir;
 uniform highp sampler2D uStarColour;
 uniform float uStarsReady;
+uniform sampler2D uMilkyWay;
+uniform vec3 uMilkyWayRange;
+uniform float uMilkyWayReady;
 uniform vec4 uBrightDir[BRIGHT_COUNT];
 uniform vec4 uBrightLight[BRIGHT_COUNT];
 uniform vec3 uNightGlow;
@@ -563,6 +566,19 @@ vec3 unrefract(vec3 d) {
   return vec3(hz.x * cos(alt), sin(alt), hz.y * cos(alt));
 }
 
+// The real Milky Way: NASA's Deep Star Maps 2020 (Hipparcos, Tycho-2 and Gaia DR2), the light of the stars too faint
+// to draw one by one, calibrated against the catalogue to radiance relative to sunlight (see stars.ts and
+// docs/night-sky.md). The dark-adapted eye sees little colour in so faint a glow, so most of it is taken out.
+vec3 milkyWayMap(vec3 eq, float pixelAngle) {
+  float ra = atan(eq.y, eq.x);
+  float dec = asin(clamp(eq.z, -1.0, 1.0));
+  vec2 uv = vec2(fract(0.5 + uMilkyWayRange.z * ra / (2.0 * PI)), 0.5 + dec / PI);
+  float texel = 2.0 * PI / float(textureSize(uMilkyWay, 0).x);
+  vec3 c = textureLod(uMilkyWay, uv, max(log2(pixelAngle / texel), 0.0)).rgb;
+  vec3 L = exp2(mix(vec3(uMilkyWayRange.x), vec3(uMilkyWayRange.y), c)) * clamp(c * 255.0, 0.0, 1.0);
+  return mix(vec3(dot(L, vec3(0.2126, 0.7152, 0.0722))), L, 0.45);
+}
+
 // The Milky Way: a band about the galactic equator, brightest towards the centre in Sagittarius.
 float milkyWay(vec3 eq) {
   const vec3 NGP = vec3(-0.8676, -0.1981, 0.4560);
@@ -626,7 +642,9 @@ void main() {
     float airmass = 1.0 / max(d.y + 0.025, 0.03);
     float scint = clamp(0.08 * pow(airmass, 1.1), 0.0, 0.7);
     vec3 night = stars(eq, pixelAngle, scint) * uSunIlluminance;
-    night += uSunIlluminance * 2.2e-9 * milkyWay(eq) * vec3(0.9, 0.93, 1.0);
+    night += uSunIlluminance * (uMilkyWayReady > 0.5
+      ? milkyWayMap(eq, pixelAngle)
+      : 2.2e-9 * milkyWay(eq) * vec3(0.9, 0.93, 1.0));
     vec3 behind = night;
 
     // The moon, hiding what is behind it.
