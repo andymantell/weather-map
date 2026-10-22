@@ -185,6 +185,32 @@ def sea_bed(heights, d, spacing):
     return np.minimum(blurred, shelf)
 
 
+# Where the lidar DTM stops (out of England, open sea) it fades into the tiles over this (m).
+LIDAR_FEATHER_M = 100
+
+
+def lidar_heights(area_name, tiles, x0, y1, step):
+    """The Environment Agency lidar DTM (fetch_external.py) averaged onto the fine raster, over
+    the terrain tiles wherever it has data. England only; elsewhere the tiles stay."""
+    path = EXTERNAL / f"{area_name}_dtm.tif"
+    if not path.exists():
+        print("no lidar DTM, heights from terrain tiles only")
+        return tiles
+    import rasterio
+    from rasterio.transform import from_origin
+    from rasterio.warp import Resampling, reproject
+
+    dtm = np.full(tiles.shape, np.nan, np.float32)
+    with rasterio.open(path) as src:
+        reproject(src.read(1).astype(np.float32) / 10, dtm, src_transform=src.transform, src_crs=src.crs,
+                  src_nodata=src.nodata / 10, dst_transform=from_origin(x0 - step / 2, y1 + step / 2, step, step),
+                  dst_crs=PROJ, dst_nodata=np.nan, resampling=Resampling.average)
+    valid = np.isfinite(dtm)
+    w = np.clip(distance_transform_edt(valid) * step / LIDAR_FEATHER_M, 0, 1)
+    print(f"lidar DTM covers {valid.mean():.1%} of the area")
+    return np.where(valid, np.nan_to_num(dtm) * w + tiles * (1 - w), tiles)
+
+
 # Largest height error (m) the ground mesh may make against the fine raster.
 MESH_ERROR = 0.5
 
@@ -404,7 +430,7 @@ def main(area_name):
     fys = np.arange(y1, y0 - step, -step)
     gx, gy = np.meshgrid(fxs, fys)
     lon, lat = (np.asarray(a) for a in to_lonlat.transform(gx, gy))
-    heights = sample_elevation(lon, lat)
+    heights = lidar_heights(area_name, sample_elevation(lon, lat), x0, y1, step)
     del lon, lat
     print("heights", heights.shape, heights.min(), heights.max())
 

@@ -5,6 +5,9 @@ Writes into .cache/detail/external/:
 - <area>_ndsm.tif   Height above ground (first-return DSM minus DTM) at 1 m, in decimetres
                     (int16, deflate), EPSG:27700. Environment Agency LIDAR Composite 2022,
                     England only. Used by build_area.py for measured building heights.
+- <area>_dtm.tif   Bare-ground height at 1 m, in decimetres (int16, deflate, nodata -32768),
+                    EPSG:27700. Environment Agency LIDAR Composite DTM 2022, England only.
+                    Used by build_area.py for the ground heights (docs/coastal-cliffs.md).
 - <area>_nfi.geojson    National Forest Inventory woodland polygons (Forestry Commission), GB.
 - <area>_phi.geojson    Priority Habitats Inventory polygons (Natural England), England.
 
@@ -123,6 +126,39 @@ def fetch_lidar(area, bbox):
     print("wrote", out, f"({missing} chunks without data)")
 
 
+def fetch_dtm(area, bbox):
+    out = OUT / f"{area}_dtm.tif"
+    if out.exists():
+        print("have", out)
+        return
+    x0, y0, x1, y1 = bng_bbox(bbox)
+    cov = coverage_id(DTM_WCS)
+    w, h = x1 - x0, y1 - y0
+    dtm = np.full((h, w), -32768, np.int16)
+    missing = 0
+    for cy in range(y0, y1, CHUNK):
+        for cx in range(x0, x1, CHUNK):
+            ex, ey = min(cx + CHUNK, x1), min(cy + CHUNK, y1)
+            try:
+                a = wcs_chunk(DTM_WCS, cov, cx, cy, ex, ey)
+            except RuntimeError as error:
+                # Outside England, or open sea: leave nodata and let the build fall back.
+                print(f"  dtm chunk {cx},{cy} skipped: {str(error)[-80:]}")
+                missing += 1
+                continue
+            hh, ww = min(a.shape[0], ey - cy), min(a.shape[1], ex - cx)
+            d = np.where(np.isnan(a[:hh, :ww]), -32768, np.clip(np.round(a[:hh, :ww] * 10), -32000, 32000))
+            r0 = y1 - ey
+            dtm[r0:r0 + hh, cx - x0:cx - x0 + ww] = d.astype(np.int16)
+            print(f"  dtm chunk {cx},{cy}")
+    OUT.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(out, "w", driver="GTiff", width=w, height=h, count=1, dtype="int16",
+                       crs="EPSG:27700", transform=from_origin(x0, y1, 1, 1), nodata=-32768,
+                       compress="deflate", predictor=2, tiled=True) as dst:
+        dst.write(dtm, 1)
+    print("wrote", out, f"({missing} chunks without data)")
+
+
 def fetch_features(url, bbox, out):
     if out.exists():
         print("have", out)
@@ -169,6 +205,7 @@ def main(area, skip_lidar=False):
     bbox = ba.AREAS[area]["bbox"]
     if not skip_lidar:
         fetch_lidar(area, bbox)
+        fetch_dtm(area, bbox)
     fetch_features(NFI_URL, bbox, OUT / f"{area}_nfi.geojson")
     fetch_wfs(PHI_WFS, PHI_TYPE, bbox, OUT / f"{area}_phi.geojson")
 
