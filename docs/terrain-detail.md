@@ -83,6 +83,32 @@ The map's vertical exaggeration (4× by default) turns hills into cliffs from th
 **Real relief near the ground** ticked (the default), it eases on a log scale of height from the
 slider's value at 20 km down to 1.5× at 200 m and below.
 
+## Lidar heights, Forest Inventory and habitats (2026-10-22)
+
+Both tiles were rebuilt with the government datasets from `fetch_external.py` (see
+[terrain-data-sources.md](terrain-data-sources.md)). The previous data is kept in
+`public/data/detail-before/`; tick "Old terrain data" in the app (or add `?terrain=before`) to
+compare. Measured on Andy's laptop (Radeon RX 7700S).
+
+- **Forests (NFI) and habitats (PHI):** Kielder changed most. Conifer went from 60.8% of the tile
+  to 23.1%, with felled 30.5%, young 9.8%, heath 17.2% and wetland 11.3%. The 30% felled is what
+  the NFI says (it labels 45% of its Kielder woodland "Felled", plus ground prep and windblow); it
+  may include restocked ground. Views now show separate forest blocks and clearings instead of one
+  conifer carpet. Plymouth changed little (broadleaf 11.0 → 11.3%, conifer 2.0 → 1.5%).
+- **Building heights (EA lidar):** the 90th percentile of DSM − DTM in the footprint. Three
+  lessons: it measures near the ridge, so gabled houses take eave = measured − gable; it overrides
+  Microsoft's ML heights; and on small buildings it often reads garden trees or offset footprints
+  (70 m² houses at 15–25 m), so under 300 m² a reading over twice the estimate is rejected. Final
+  Plymouth: 47,210 of 97,788 buildings use lidar, 5,968 readings rejected; 1.1% of buildings are
+  12 m or taller, as before. About 580 buildings over 300 m² or not house-shaped are still taller
+  than before, e.g. a grey block on the far left of the Hoe view. In Kielder 89 use lidar and 139
+  were rejected; most of that tile is in Scotland, where the EA has no lidar.
+- **Frame times** (mean ms, alternating runs): Plymouth Hoe 15.5 after vs 15.0–15.2 before (no
+  change; ~16 ms is likely the display refresh cap). Kielder forest 12.8 after vs 19.5 before,
+  because felled and young ground no longer gets conifers.
+- **Still to do:** felled ground draws like dark grass, because the satellite colour wins over the
+  brash texture.
+
 ## Performance
 
 Frame times on Andy's machine (Radeon RX 7700S, Chrome, ANGLE/D3D11, 1600 × 900), over

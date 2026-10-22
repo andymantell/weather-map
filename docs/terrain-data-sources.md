@@ -3,8 +3,9 @@
 Research for the UK-wide terrain bake ([terrain-bake-handoff.md](terrain-bake-handoff.md)),
 done on 2026-10-21. Andy's position is that the current building-height estimates and the
 moorland/forest rules are fine for now. This doc records what better open sources exist, so
-the bake can use them if they're worth it. Nothing here has been downloaded or tested yet;
-licences and coverage are as stated by the publishers' pages linked below.
+the bake can use them if they're worth it. Licences and coverage are as stated by the publishers' pages linked below. The EA lidar, NFI
+and PHI have since been adopted for the two test tiles; results are in
+[terrain-detail.md](terrain-detail.md#lidar-heights-forest-inventory-and-habitats-2026-10-22).
 
 ## Building heights
 
