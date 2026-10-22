@@ -71,6 +71,26 @@ export async function loadUkvClouds(baseUrl: string): Promise<UkvCloudData> {
   return { meta, volume, fields };
 }
 
+/**
+ * Aerial perspective and exposure from src/atmosphere: GLSL defining aerialPerspective(), applyAerialPerspective(),
+ * uPreExposure and uCloudExposure, and the uniforms behind them.
+ */
+export interface CloudAtmosphere {
+  glsl: string;
+  uniforms: Record<string, THREE.IUniform>;
+}
+
+/** Stand-in when there is no atmosphere: no haze, no exposure scaling. */
+const NO_ATMOSPHERE: CloudAtmosphere = {
+  glsl: /* glsl */ `
+uniform float uPreExposure;
+uniform float uCloudExposure;
+void aerialPerspective(vec2 uv, float dist, out vec3 L, out vec3 T) { L = vec3(0.0); T = vec3(1.0); }
+vec3 applyAerialPerspective(vec3 color, vec2 uv, float dist) { return color; }
+`,
+  uniforms: { uPreExposure: { value: 1 }, uCloudExposure: { value: 1 } },
+};
+
 /** Frames averaged before a still view counts as converged and the clouds stop being marched. */
 const MAX_FRAMES = 32;
 /** History length while the camera moves: an exponential blend of 1/10 per frame, reprojected. */
@@ -95,6 +115,8 @@ export function terrainTexture(heightmap: Heightmap): THREE.DataTexture {
 
 export interface CloudLayer {
   enabled: boolean;
+  /** Light the cloud shader uses, for the atmosphere to set; call invalidate() after changing it. */
+  readonly lighting: { sunRadiance: THREE.Color; ambientTop: THREE.Color; ambientBottom: THREE.Color };
   /** Renders the scene with clouds to the screen; call instead of renderer.render(scene, camera). */
   render(): void;
   setExaggeration(value: number): void;
@@ -134,8 +156,9 @@ export function createCloudLayer(
   data: UkvCloudData,
   heightmap: Heightmap,
   sunDirection: THREE.Vector3,
-  options: { resolution?: number; steps?: number } = {},
+  options: { resolution?: number; steps?: number; atmosphere?: CloudAtmosphere } = {},
 ): CloudLayer {
+  const atmosphere = options.atmosphere ?? NO_ATMOSPHERE;
   const resolution = options.resolution ?? 0.5;
   const size = new THREE.Vector2();
 
@@ -148,14 +171,13 @@ export function createCloudLayer(
 
   const { grid, volume } = data.meta;
   const hm = heightmap.meta;
-  const fogColor = new THREE.Color();
-  const fogRange = new THREE.Vector2(1e5, 2e5);
 
   const cloudMaterial = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,
     vertexShader: fullscreenVertexShader,
-    fragmentShader: ukvCloudFragmentShader,
+    fragmentShader: ukvCloudFragmentShader.replace('// #include <atmosphere>', atmosphere.glsl),
     uniforms: {
+      ...atmosphere.uniforms,
       uVolume: { value: data.volume },
       uFields: { value: data.fields },
       uTerrain: { value: terrainTexture(heightmap) },
@@ -185,8 +207,6 @@ export function createCloudLayer(
       uSunRadiance: { value: new THREE.Color(1, 0.95, 0.88).multiplyScalar(30) },
       uAmbientTop: { value: new THREE.Color(0.48, 0.57, 0.72) },
       uAmbientBottom: { value: new THREE.Color(0.2, 0.22, 0.25) },
-      uFogColor: { value: fogColor },
-      uFogRange: { value: fogRange },
     },
     depthTest: false,
     depthWrite: false,
@@ -219,8 +239,9 @@ export function createCloudLayer(
   });
   const compositeMaterial = new THREE.ShaderMaterial({
     vertexShader: compositeVertexShader,
-    fragmentShader: compositeFragmentShader,
+    fragmentShader: compositeFragmentShader.replace('// #include <atmosphere>', atmosphere.glsl),
     uniforms: {
+      ...atmosphere.uniforms,
       uScene: { value: sceneTarget.texture },
       uCloud: { value: null },
       uShadow: { value: null },
@@ -267,8 +288,26 @@ export function createCloudLayer(
     layer.invalidate();
   };
 
+  const updateCameraUniforms = () => {
+    const u = cloudMaterial.uniforms;
+    u.uInvProj.value.copy(camera.projectionMatrixInverse);
+    u.uCamWorld.value.copy(camera.matrixWorld);
+    u.uCamPos.value.setFromMatrixPosition(camera.matrixWorld);
+    camera.getWorldDirection(u.uCamForward.value);
+    u.uFar.value = camera.far;
+  };
+  const clearCloud = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1);
+  clearCloud.needsUpdate = true;
+  const clearShadow = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+  clearShadow.needsUpdate = true;
+
   const layer: CloudLayer = {
     enabled: true,
+    lighting: {
+      sunRadiance: cloudMaterial.uniforms.uSunRadiance.value,
+      ambientTop: cloudMaterial.uniforms.uAmbientTop.value,
+      ambientBottom: cloudMaterial.uniforms.uAmbientBottom.value,
+    },
     get frames() {
       return frames;
     },
@@ -310,8 +349,18 @@ export function createCloudLayer(
     },
     render() {
       if (!layer.enabled) {
-        renderer.setRenderTarget(null);
+        // No clouds, but the composite still applies the aerial perspective and pre-exposure.
+        renderer.setRenderTarget(sceneTarget);
         renderer.render(scene, camera);
+        updateCameraUniforms();
+        const c = compositeMaterial.uniforms;
+        c.uCloud.value = clearCloud;
+        c.uShadow.value = clearShadow;
+        quad.material = compositeMaterial;
+        renderer.setRenderTarget(null);
+        renderer.render(quadScene, quadCamera);
+        frames = 0;
+        resetHistory = true;
         return;
       }
       camera.updateMatrixWorld();
@@ -338,16 +387,8 @@ export function createCloudLayer(
       }
 
       const u = cloudMaterial.uniforms;
-      u.uInvProj.value.copy(camera.projectionMatrixInverse);
-      u.uCamWorld.value.copy(camera.matrixWorld);
-      u.uCamPos.value.setFromMatrixPosition(camera.matrixWorld);
-      camera.getWorldDirection(u.uCamForward.value);
-      u.uFar.value = camera.far;
+      updateCameraUniforms();
       u.uFrame.value = frames;
-      if (scene.fog instanceof THREE.Fog) {
-        fogColor.copy(scene.fog.color);
-        fogRange.set(scene.fog.near, scene.fog.far);
-      }
 
       quad.material = cloudMaterial;
       renderer.setRenderTarget(cloudTarget);

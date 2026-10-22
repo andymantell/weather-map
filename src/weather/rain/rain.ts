@@ -45,6 +45,8 @@ export interface RainLayer {
   setThroughCloud(value: number): void;
   /** Shows or hides the curtains and the drops, for comparing them. */
   setParts(veils: boolean, streaks: boolean): void;
+  /** Multiplies the rain's colour (display space), for the time of day; src/atmosphere sets it. */
+  readonly light: THREE.Color;
 }
 
 /**
@@ -86,6 +88,7 @@ export function createRainLayer(
     uCloudOpacity: { value: 0.75 },
     uThroughCloud: { value: 0.6 },
     uPixel: { value: 1e-3 },
+    uLight: { value: new THREE.Color(1, 1, 1) },
   };
 
   const scene = new THREE.Scene();
@@ -128,6 +131,7 @@ export function createRainLayer(
 
   const layer: RainLayer = {
     enabled: true,
+    light: shared.uLight.value,
     setStrength(value) {
       shared.uStrength.value = value;
     },

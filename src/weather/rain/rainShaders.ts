@@ -96,6 +96,7 @@ uniform vec2 uViewport;
 uniform float uFar;
 uniform float uCloudOpacity;
 uniform float uThroughCloud; // how much rain behind cloud still shows, 0 to 1
+uniform vec3 uLight;         // daylight colour and level in display space, from src/atmosphere
 
 // Fades a fragment at view depth w against the scene and the clouds in front of it.
 float occlusion(float w) {
@@ -190,6 +191,7 @@ void main() {
   if (a < 0.002) discard;
   // A mid blue-grey reads both against bright cloud and sky and against dark sea and land.
   vec3 color = mix(vec3(0.62, 0.67, 0.74), vec3(0.5, 0.55, 0.63), vHeat);
+  color *= uLight;
   outColor = vec4(color, a);
 }
 `;
@@ -280,6 +282,7 @@ void main() {
   if (a < 0.002) discard;
   // Light rain is a pale blue-grey haze, heavy rain a dark grey curtain.
   vec3 color = mix(vec3(0.52, 0.58, 0.68), vec3(0.22, 0.25, 0.3), vDark);
+  color *= uLight;
   outColor = vec4(color, a);
 }
 `;

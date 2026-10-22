@@ -1,0 +1,26 @@
+{
+  "forecast_reference_time": "2026-10-21T09:00:00Z",
+  "valid_time": "2026-10-21T12:00:00Z",
+  "run": "20261021T0900Z",
+  "step_hours": 3,
+  "grid": {
+    "width": 541,
+    "height": 681,
+    "x_west": -640000.0,
+    "y_north": 720000.0,
+    "dx": 2000.0,
+    "dy": -2000.0,
+    "note": "cell centres in LAEA metres; row 0 at y_north"
+  },
+  "encoding": {
+    "r": "visibility m = 10 * 10000^(value / 255)",
+    "g": "fog fraction = value / 255",
+    "b": "relative humidity % = 100 * value / 255"
+  },
+  "sources": [
+    "20261021T1200Z-PT0003H00M-visibility_at_screen_level.nc",
+    "20261021T1200Z-PT0003H00M-fog_fraction_at_screen_level.nc",
+    "20261021T1200Z-PT0003H00M-relative_humidity_at_screen_level.nc"
+  ],
+  "attribution": "Contains Met Office data \u00a9 Crown copyright, licensed under CC BY-SA 4.0"
+}

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { Sky } from 'three/addons/objects/Sky.js';
+import { Atmosphere, mountAtmosphereControls } from './atmosphere/atmosphere';
+import { loadUkvSurface, WeatherSampler } from './atmosphere/localWeather';
 import { CameraRig, mountCameraControls } from './camera/cameraRig';
 import { loadHeightmap } from './heightmap';
 import { Projection } from './projection';
@@ -28,38 +29,18 @@ renderer.toneMappingExposure = 0.6;
 container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog('#b9cfe0', 600, 2600);
 
 // World units are kilometres. The camera rig moves the near plane with the camera's height above ground.
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 20000);
 
-// Low afternoon sun from the south-west (azimuth is measured from +Z, which is south).
-const sunElevation = THREE.MathUtils.degToRad(28);
-const sunAzimuth = THREE.MathUtils.degToRad(-45);
-const sunDirection = new THREE.Vector3().setFromSphericalCoords(
-  1,
-  Math.PI / 2 - sunElevation,
-  sunAzimuth,
-);
-
-const sky = new Sky();
-sky.scale.setScalar(15000);
-// The sky shader ignores the logarithmic depth buffer, so draw it first as a backdrop.
-sky.material.depthTest = false;
-sky.renderOrder = -1;
-const skyUniforms = sky.material.uniforms;
-skyUniforms.turbidity.value = 6;
-skyUniforms.rayleigh.value = 1.5;
-skyUniforms.mieCoefficient.value = 0.005;
-skyUniforms.mieDirectionalG.value = 0.8;
-skyUniforms.sunPosition.value.copy(sunDirection);
-scene.add(sky);
-
-const sun = new THREE.DirectionalLight('#fff3e0', 3.2);
-sun.position.copy(sunDirection).multiplyScalar(1000);
+// The key light: the sun by day and the moon by night, placed by the atmosphere for the time being viewed. Its
+// direction vector is shared with the clouds (lighting and shadows) and the detailed terrain's shadows.
+const keyDirection = new THREE.Vector3(0, 1, 0);
+const sun = new THREE.DirectionalLight('#ffffff', 3.2);
 scene.add(sun);
-scene.add(new THREE.HemisphereLight('#cfe3f5', '#4a4636', 0.9));
+scene.add(sun.target);
 
+let atmosphere: Atmosphere | undefined;
 let clouds: CloudLayer | undefined;
 let rig: CameraRig | undefined;
 let detail: DetailTerrain | undefined;
@@ -89,30 +70,33 @@ async function init() {
   // ?live reads the next hour of UKV straight from the Met Office bucket; ?live=2026-10-21T18:00Z picks the hour.
   const liveParam = new URLSearchParams(location.search).get('live');
   let live: UkvLive | undefined;
-  let heightmap, rainField, cloudData;
+  let heightmap, rainField, cloudData, surface;
   if (liveParam === null) {
-    [heightmap, rainField, cloudData] = await Promise.all([
+    [heightmap, rainField, cloudData, surface] = await Promise.all([
       loadHeightmap(import.meta.env.BASE_URL),
       loadRainField(import.meta.env.BASE_URL),
       loadUkvClouds(import.meta.env.BASE_URL),
+      loadUkvSurface(import.meta.env.BASE_URL),
     ]);
   } else {
     heightmap = await loadHeightmap(import.meta.env.BASE_URL);
     loading.textContent = 'Reading UKV from the Met Office bucket…';
     live = await loadUkvLive(heightmap.meta, liveParam ? new Date(liveParam) : new Date());
-    ({ rainField, data: cloudData } = live);
+    ({ rainField, data: cloudData, surface } = live);
   }
   const projection = new Projection(heightmap.meta.proj);
+  atmosphere = new Atmosphere(renderer, scene, camera, projection, sun, keyDirection);
 
   const terrain = createTerrain(heightmap);
   scene.add(terrain);
-  rig = new CameraRig(camera, renderer.domElement, terrain, scene);
+  rig = new CameraRig(camera, renderer.domElement, terrain);
   mountCameraControls(document.getElementById('hud')!, rig, document.getElementById('camera-hint')!);
   const flatSea = createSea(heightmap);
   scene.add(flatSea);
-  const sea = await createOcean(renderer, heightmap, sky, import.meta.env.BASE_URL);
+  const sea = await createOcean(heightmap, import.meta.env.BASE_URL);
   ocean = sea;
   scene.add(sea.mesh);
+  atmosphere.envMaterials.push(sea.material);
   mountSeaControls(document.getElementById('hud')!, sea, flatSea);
 
   const rain = createRainPlane(rainField, heightmap.meta);
@@ -120,10 +104,17 @@ async function init() {
   rainInput.addEventListener('change', () => (rain.visible = rainInput.checked));
   // The volumetric clouds show the rain, so the flat rain overlay starts hidden.
   rainInput.checked = rain.visible = false;
-  clouds = createCloudLayer(renderer, scene, camera, cloudData, heightmap, sunDirection);
+  clouds = createCloudLayer(renderer, scene, camera, cloudData, heightmap, keyDirection, {
+    atmosphere: atmosphere.cloudHook,
+  });
   mountCloudControls(document.getElementById('hud')!, clouds, cloudData.meta, !!live);
+  atmosphere.attachClouds(clouds);
+  atmosphere.attachWeather(new WeatherSampler(cloudData, surface));
+  atmosphere.setDataTime(new Date(cloudData.meta.valid_time));
+  mountAtmosphereControls(document.getElementById('hud')!, atmosphere);
   animatedRain = createRainLayer(renderer, camera, clouds, cloudData, heightmap, (x, z) => rig!.sampler.heightAt(x, z));
   mountRainControls(document.getElementById('hud')!, animatedRain);
+  atmosphere.attachDisplayLight(animatedRain.light);
   const showValidTime = () => {
     const validTime = new Date(rainField.meta.valid_time).toISOString().slice(0, 16).replace('T', ' ');
     rainInfo.textContent = `UKV precipitation rate, valid ${validTime} UTC. ${rainField.meta.attribution}.`;
@@ -132,6 +123,8 @@ async function init() {
   if (live) {
     mountTimeControls(document.getElementById('hud')!, live, () => {
       clouds!.invalidate();
+      atmosphere!.setDataTime(new Date(live!.data.meta.valid_time));
+      atmosphere!.weatherChanged();
       showValidTime();
     });
   }
@@ -158,8 +151,9 @@ async function init() {
 
   loading.remove();
 
-  // Detailed tiles (towns, woods, fine terrain) load after the map is up.
-  createDetailTerrain(import.meta.env.BASE_URL, terrain, sun, renderer)
+  // Detailed tiles (towns, woods, fine terrain) load after the map is up; ?detail=off skips them (software GL tests).
+  const skipDetail = new URLSearchParams(location.search).get('detail') === 'off';
+  if (!skipDetail) createDetailTerrain(import.meta.env.BASE_URL, terrain, sun, renderer)
     .then((d) => {
       detail = d;
       d.setExaggeration(terrain.scale.y);
@@ -170,7 +164,7 @@ async function init() {
     })
     .catch((error) => console.error('Detailed terrain failed to load', error));
   // Handles for driving the view from the console or screenshot scripts.
-  if (import.meta.env.DEV) Object.assign(window, { camera, rig, projection, scene, clouds, rain: animatedRain, renderer, live });
+  if (import.meta.env.DEV) Object.assign(window, { camera, rig, projection, scene, clouds, rain: animatedRain, renderer, live, atmosphere });
 }
 
 window.addEventListener('resize', () => {
@@ -202,11 +196,15 @@ timer.connect(document);
 renderer.setAnimationLoop((time) => {
   timer.update(time);
   // Clamp the step so a stalled tab does not teleport the camera.
-  rig?.update(Math.min(timer.getDelta(), 0.1));
+  const dt = Math.min(timer.getDelta(), 0.1);
+  rig?.update(dt);
   if (rig) {
     const p = camera.position;
-    const aboveGround = Math.max(p.y - rig.sampler.heightAt(p.x, p.z), 0.001);
+    const groundY = rig.sampler.heightAt(p.x, p.z);
+    const aboveGround = Math.max(p.y - groundY, 0.001);
     easeRelief(aboveGround);
+    // Before the detailed terrain, which aims the key light's shadow camera.
+    atmosphere?.update(dt, groundY);
     detail?.update(camera, aboveGround);
     if (detail && ocean) feedSeaGrounds(detail, ocean, p);
   }

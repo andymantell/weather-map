@@ -26,6 +26,7 @@ const HOURLY = {
 const QUARTERLY = {
   precip: { param: 'precipitation_rate', variable: 'lwe_precipitation_rate' },
   cape: { param: 'CAPE_surface', variable: 'atmosphere_convective_available_potential_energy_wrt_surface' },
+  visibility: { param: 'visibility_at_screen_level', variable: 'visibility_in_air' },
 };
 /** Same encodings as pipeline/ukv_clouds.py. */
 const RAIN_MAX_MM_H = 64;
@@ -55,6 +56,8 @@ export interface LiveStats {
 
 export interface UkvLive {
   data: UkvCloudData;
+  /** Screen-level visibility (km, north-first rows on the cloud grid) for the atmosphere's haze, kept in step. */
+  surface: { meta: UkvCloudMeta; visibility: Float32Array };
   /** The flat precipitation overlay's field, kept in step with the timeline. */
   rainField: { meta: UkvFieldMeta; texture: THREE.DataTexture };
   run: Date;
@@ -221,7 +224,7 @@ export async function loadUkvLive(hm: HeightmapMeta, now = new Date()): Promise<
   const levels: [number, number] = [weights[0].i, weights[weights.length - 1].i + 1];
 
   type Hourly = { volume: Uint8Array; base: Float32Array; high: Float32Array };
-  type Quarterly = { precip: Float32Array; cape: Float32Array };
+  type Quarterly = { precip: Float32Array; cape: Float32Array; visibility: Float32Array };
   const hours: { time: number; value?: Hourly }[] = [];
   for (let t = firstHour; t <= lastHour; t += HOUR) hours.push({ time: t });
   const quarters: { time: number; value?: Quarterly }[] = [];
@@ -245,11 +248,16 @@ export async function loadUkvLive(hm: HeightmapMeta, now = new Date()): Promise<
   };
   const loadQuarter = async (slot: (typeof quarters)[number]) => {
     const valid = new Date(slot.time);
-    const [precip, cape] = await Promise.all([
+    const [precip, cape, visibility] = await Promise.all([
       readField(fileUrl(run, valid, QUARTERLY.precip.param), QUARTERLY.precip.variable, crop, stats),
       readField(fileUrl(run, valid, QUARTERLY.cape.param), QUARTERLY.cape.variable, crop, stats),
+      readField(fileUrl(run, valid, QUARTERLY.visibility.param), QUARTERLY.visibility.variable, crop, stats),
     ]);
-    slot.value = { precip: northFirst(precip.data, crop, precip.fill), cape: northFirst(cape.data, crop, cape.fill) };
+    slot.value = {
+      precip: northFirst(precip.data, crop, precip.fill),
+      cape: northFirst(cape.data, crop, cape.fill),
+      visibility: northFirst(visibility.data, crop, visibility.fill),
+    };
   };
 
   // The first hour and quarter first, so there is something to show; then the rest in time order.
@@ -308,6 +316,8 @@ export async function loadUkvLive(hm: HeightmapMeta, now = new Date()): Promise<
     base: new Float32Array(nx * ny),
     high: new Float32Array(nx * ny),
   };
+  // Visibility in km; NaN (no data) reads as clear air.
+  const surfaceVisibility = new Float32Array(nx * ny);
 
   // Steps load in time order, so the timeline is good up to the last step loaded in each series.
   const lastLoaded = (steps: { time: number; value?: unknown }[]) => {
@@ -328,6 +338,11 @@ export async function loadUkvLive(hm: HeightmapMeta, now = new Date()): Promise<
     lerpField(h.a.high, h.b.high, f, scratch.high);
     lerpField(q.a.precip, q.b.precip, q.f, scratch.precip);
     lerpField(q.a.cape, q.b.cape, q.f, scratch.cape);
+    lerpField(q.a.visibility, q.b.visibility, q.f, surfaceVisibility);
+    for (let i = 0; i < surfaceVisibility.length; i++) {
+      const v = surfaceVisibility[i];
+      surfaceVisibility[i] = Number.isNaN(v) ? 30 : Math.min(Math.max(v / 1000, 0.01), 100);
+    }
 
     const px = fields.image.data as Uint8Array;
     const rain = rainTexture.image.data as Uint8Array;
@@ -357,6 +372,7 @@ export async function loadUkvLive(hm: HeightmapMeta, now = new Date()): Promise<
   stats.seconds = firstSeconds;
   const live: UkvLive = {
     data: { meta, volume, fields },
+    surface: { meta, visibility: surfaceVisibility },
     rainField: { meta: rainMeta, texture: rainTexture },
     run,
     start,

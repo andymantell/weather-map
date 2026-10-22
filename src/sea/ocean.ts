@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { Sky } from 'three/addons/objects/Sky.js';
 import type { Heightmap } from '../heightmap';
 import {
   TILE,
@@ -59,26 +58,6 @@ function createDepthTexture({ meta, heights }: Heightmap): THREE.DataTexture {
   return texture;
 }
 
-/** A prefiltered copy of the sky, without the sun disc (the sun light draws the glint). */
-function createSkyEnvironment(renderer: THREE.WebGLRenderer, sky: Sky): THREE.Texture {
-  const envSky = new Sky();
-  envSky.scale.setScalar(1000);
-  for (const [name, uniform] of Object.entries(sky.material.uniforms)) {
-    const value = uniform.value as unknown;
-    envSky.material.uniforms[name].value =
-      value && typeof (value as THREE.Vector3).clone === 'function' ? (value as THREE.Vector3).clone() : value;
-  }
-  envSky.material.uniforms.showSunDisc.value = 0;
-  const envScene = new THREE.Scene();
-  envScene.add(envSky);
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const target = pmrem.fromScene(envScene, 0, 0.1, 2000);
-  pmrem.dispose();
-  envSky.geometry.dispose();
-  envSky.material.dispose();
-  return target.texture;
-}
-
 export interface Ocean {
   mesh: THREE.Mesh;
   field: WaveField;
@@ -99,9 +78,7 @@ export interface Ocean {
  * wave shader with sky reflections, sun glint, whitecaps and surf.
  */
 export async function createOcean(
-  renderer: THREE.WebGLRenderer,
   heightmap: Heightmap,
-  sky: Sky,
   baseUrl: string,
 ): Promise<Ocean> {
   const field = await loadWaveField(baseUrl);
@@ -146,9 +123,9 @@ export async function createOcean(
     metalness: 0,
     roughness: 0.3,
     ior: 1.333,
-    envMap: createSkyEnvironment(renderer, sky),
-    // The Sky shader is much brighter than the sunlit land; tone its reflection down to match.
-    envMapIntensity: 0.3,
+    // The sky's reflection: src/atmosphere sets envMap (the sky without the sun disc; the sun light draws the
+    // glint) and its intensity as the sky changes.
+    envMap: null,
     transparent: true,
     // Premultiplied output (see opaqueFragment).
     blending: THREE.CustomBlending,

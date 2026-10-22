@@ -249,7 +249,8 @@ export async function createDetailTerrain(
   // The shadow camera spans 150 km of depth (km units), so bias is tiny: about 0.3 m.
   sun.shadow.bias = -0.000002;
   sun.shadow.normalBias = 0.0005;
-  const sunDirection = sun.position.clone().normalize();
+  // The atmosphere moves the sun (and swaps in the moon at night) and shares its direction here.
+  const sunDirection = (sun.userData.direction as THREE.Vector3 | undefined) ?? sun.position.clone().normalize();
   sun.shadow.camera.near = 150;
   sun.shadow.camera.far = 300;
   if (!sun.target.parent) group.add(sun.target);

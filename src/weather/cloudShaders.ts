@@ -21,6 +21,8 @@ layout(location = 0) out highp vec4 outCloud;
 layout(location = 1) out highp vec4 outShadow;
 in vec2 vUv;
 
+// #include <atmosphere>
+
 uniform sampler3D uVolume;   // cloud fraction on uniform AGL slices
 uniform sampler2D uFields;   // r: rain, g: cloud base, b: high cloud, a: CAPE
 uniform sampler2D uTerrain;  // ground height, km
@@ -54,8 +56,6 @@ uniform vec3 uSunDir;
 uniform vec3 uSunRadiance;
 uniform vec3 uAmbientTop;
 uniform vec3 uAmbientBottom;
-uniform vec3 uFogColor;
-uniform vec2 uFogRange;
 
 float remap(float v, float a, float b, float c, float d) {
   return c + (v - a) / max(b - a, 1e-4) * (d - c);
@@ -250,11 +250,15 @@ void main() {
     }
   }
 
-  // Match the scene's linear fog at the cloud's transmittance-weighted mean distance.
+  // Aerial perspective (src/atmosphere) at the cloud's transmittance-weighted mean distance, in the clouds' own
+  // exposure (uCloudExposure, which the composite rescales).
   if (weightSum > 0.0) {
-    float fog = clamp((depthSum / weightSum - uFogRange.x) / (uFogRange.y - uFogRange.x), 0.0, 1.0);
-    radiance = mix(radiance, uFogColor * (1.0 - T), fog);
+    vec3 apL, apT;
+    aerialPerspective(vUv, depthSum / weightSum, apL, apT);
+    radiance = radiance * apT + apL * uCloudExposure * (1.0 - T);
   }
+  // The march stops at 1% transmittance; treat that as opaque so nothing bright (the sun's disc) shows through.
+  if (T < 0.0101) T = 0.0;
 
   // Cloud shadow on whatever the scene drew at this pixel.
   float shadow = 1.0;
@@ -436,6 +440,8 @@ uniform vec4 uTerrainBox;
 uniform vec2 uTerrainSize;
 varying vec2 vUv;
 
+// #include <atmosphere>
+
 // 1 on a line where value crosses a multiple of step, antialiased to about widthPx pixels.
 float isoline(float value, float step, float widthPx) {
   float f = value / step;
@@ -453,7 +459,16 @@ void main() {
   float light = max(mix(1.0, shadow, uShadowStrength), uShadowFloor);
   vec3 tint = mix(vec3(1.0), vec3(0.93, 0.97, 1.05), 1.0 - shadow);
   vec3 scene = texture2D(uScene, vUv).rgb * light * tint;
-  vec3 color = scene * (1.0 - cloud.a) + cloud.rgb;
+  // Aerial perspective (src/atmosphere) on whatever the scene drew; the sky has its own.
+  float sceneDepth = texture2D(uDepth, vUv).r;
+  if (sceneDepth < 1.0) {
+    float sw = pow(uFar + 1.0, sceneDepth) - 1.0;
+    vec4 sv = uInvProj * vec4(vUv * 2.0 - 1.0, -1.0, 1.0);
+    vec3 srd = normalize((uCamWorld * vec4(sv.xyz / sv.w, 0.0)).xyz);
+    scene = applyAerialPerspective(scene, vUv, sw / max(dot(srd, uCamForward), 1e-4));
+  }
+  // The clouds were lit at uCloudExposure; bring them to the current exposure.
+  vec3 color = scene * (1.0 - cloud.a) + cloud.rgb * (uPreExposure / uCloudExposure);
 
   // Coastline and height contours of the ground under the cloud, drawn on top so the map stays readable.
   // Full resolution, from the scene depth, so the lines stay sharp while the clouds are still converging.

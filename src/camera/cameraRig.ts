@@ -11,9 +11,6 @@ const GROUND_FOV = 60;
 /** Lowest the map camera may sit above the ground (km). */
 const MAP_CLEARANCE = 0.3;
 
-/** Linear fog distances (km) at ground level; high up the scene's own fog applies, giving the map its long view. */
-const GROUND_FOG = { near: 4, far: 140 };
-
 const HINTS: Record<CameraMode, string> = {
   map: 'Drag to pan, right-drag to rotate, scroll to zoom. Double-click anywhere to fly down to it. H hides this panel.',
   flying: 'Flying…',
@@ -25,7 +22,7 @@ const HINTS: Record<CameraMode, string> = {
 /**
  * Owns the camera: an orbiting map view, a first person ground view, and the flights between them. Double-clicking
  * the map dives the camera down through the clouds to stand at that spot; Esc climbs back out. Each frame it also
- * fits the near plane and fog to the camera's height so close-up ground and the whole-UK view both render well.
+ * fits the near plane to the camera's height so close-up ground and the whole-UK view both render well.
  */
 export class CameraRig {
   mode: CameraMode = 'map';
@@ -37,13 +34,11 @@ export class CameraRig {
   /** Where the last dive left the map from and where it landed, so the climb back can retrace it. */
   private lastDive?: { from: CameraPose; target: THREE.Vector3; landing: THREE.Vector3 };
   private readonly listeners = new Set<(mode: CameraMode) => void>();
-  private readonly baseFog?: { near: number; far: number };
 
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
     private readonly element: HTMLElement,
     terrain: THREE.Mesh,
-    private readonly scene: THREE.Scene,
   ) {
     this.sampler = new GroundSampler(terrain);
     this.map = new MapControls(camera, element);
@@ -53,7 +48,6 @@ export class CameraRig {
     this.map.maxDistance = 3000;
     this.map.zoomToCursor = true;
     this.ground = new GroundControls(camera, element, this.sampler);
-    if (scene.fog instanceof THREE.Fog) this.baseFog = { near: scene.fog.near, far: scene.fog.far };
 
     element.addEventListener('dblclick', this.onDoubleClick);
     window.addEventListener('keydown', (event) => {
@@ -224,13 +218,6 @@ export class CameraRig {
     if (Math.abs(near - this.camera.near) > this.camera.near * 0.05) {
       this.camera.near = near;
       this.camera.updateProjectionMatrix();
-    }
-
-    if (this.baseFog && this.scene.fog instanceof THREE.Fog) {
-      // Haze closes in below ~300 km and reaches ground level visibility at ~200 m.
-      const t = THREE.MathUtils.smoothstep(Math.log10(above), Math.log10(0.2), Math.log10(300));
-      this.scene.fog.near = GROUND_FOG.near * Math.pow(this.baseFog.near / GROUND_FOG.near, t);
-      this.scene.fog.far = GROUND_FOG.far * Math.pow(this.baseFog.far / GROUND_FOG.far, t);
     }
   }
 
