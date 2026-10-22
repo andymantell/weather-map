@@ -32,6 +32,9 @@ const VIEWS = [
   { name: 'tintagel-coast', lon: -4.79, lat: 50.69, heading: 2.3, height: 0.15 },
   { name: 'boscastle-cliffs', lon: -4.72, lat: 50.70, heading: 2.0, height: 0.06 },
   { name: 'rame-head', lon: -4.222, lat: 50.300, heading: 0.1, height: 0.05 },
+  // Tidal flats (docs/coastal-cliffs.md section 6): St John's Lake and the Tamar.
+  { name: 'st-johns-lake', lon: -4.225, lat: 50.355, heading: 1.25, height: 0.04 },
+  { name: 'tamar-flats', lon: -4.19, lat: 50.425, heading: 0.6, height: 0.1 },
 ];
 
 const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--window-size=1600,980'] });

@@ -188,6 +188,22 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
     surfBump = (fbm(p / 3.0) * 0.8 + vnoise(p / 0.8) * 0.15) * bumpFade;
     return mix(vec3(0.10, 0.19, 0.08), vec3(0.19, 0.29, 0.11), n * 0.7 + fine * 0.3);
   }
+  if (k == 20) {
+    // Tidal mud and sand flats at mid tide: ripple-marked, glossy and wetter towards the
+    // waterline, mirroring the sky (surfWater); the channels lie under the sea plane.
+    float wet = 1.0 - smoothstep(0.05, 0.6, vHeight);
+    vec3 bed = mix(vec3(0.33, 0.30, 0.25), vec3(0.52, 0.47, 0.36), smoothstep(0.3, 0.7, fbm(p / 70.0)));
+    float ripple = sin(dot(p, vec2(0.9, 0.4)) * 2.2 + fbm(p / 5.0) * 6.0);
+    surfBump = (ripple * 0.015 + fbm(p / 2.0) * 0.05) * bumpFade;
+    rough = mix(0.45, 0.15, wet);
+    surfWater = 0.25 + 0.5 * wet;
+    return bed * (0.85 + 0.25 * n) * mix(1.0, 0.6, wet);
+  }
+  if (k == 21) {
+    // Saltmarsh: tussocky green-brown sward.
+    surfBump = fbm(p / 1.5) * 0.2 * bumpFade;
+    return mix(vec3(0.30, 0.34, 0.18), vec3(0.42, 0.38, 0.26), smoothstep(0.35, 0.65, fbm(p / 25.0))) * (0.85 + 0.3 * fine);
+  }
   // Sea bed / foreshore under the water plane.
   return mix(vec3(0.45, 0.42, 0.33), vec3(0.20, 0.25, 0.24), 1.0 - smoothstep(-3.0, -0.5, vHeight));
 }
@@ -215,7 +231,8 @@ vec3 surfaceColour(vec2 p, out float rough) {
     k = side;
   }
   vec3 c = proceduralColour(p, k, rough);
-  bool natural = (k >= 1 && k <= 8) || k == 14 || k >= 17;
+  // Not the flats: the summer image catches them at whatever state of tide.
+  bool natural = (k >= 1 && k <= 8) || k == 14 || (k >= 17 && k != 20);
   if (useImagery < 0.5 || !natural) return c;
   vec2 edge = min(p, areaSize - p);
   float inside = smoothstep(0.0, 600.0, min(edge.x, edge.y));

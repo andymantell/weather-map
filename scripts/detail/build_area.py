@@ -54,7 +54,7 @@ AREAS = {
 CLASSES = dict(
     sea=0, fields=1, park=2, broadleaf=3, conifer=4, heath=5, rock=6, sand=7,
     wetland=8, water=9, urban=10, industrial=11, minor_road=12, major_road=13,
-    farmyard=14, rail=15, path=16, young=17, felled=18, mixed=19,
+    farmyard=14, rail=15, path=16, young=17, felled=18, mixed=19, intertidal=20, saltmarsh=21,
 )
 
 
@@ -92,6 +92,29 @@ def external_features(area_name, kind, table):
         g = shapely.geometry.shape(f["geometry"])
         out.append((shapely.transform(g, lambda c: np.column_stack(from_lonlat.transform(c[:, 0], c[:, 1]))), cls))
     return out
+
+# Tidal flats and saltmarsh: Natural England's habitat inventory (England) and OSM's
+# wetland=tidalflat / saltmarsh, which Overture keeps in source_tags.
+TIDAL_PHI = {"mudflats": "intertidal", "coastal saltmarsh": "saltmarsh"}
+TIDAL_OSM = {"tidalflat": "intertidal", "saltmarsh": "saltmarsh"}
+
+
+def tidal_features(area_name, bbox):
+    out = external_features(area_name, "phi", TIDAL_PHI)
+    land = overture("base", "land", bbox, ["subtype", "source_tags", "geometry"], f"{area_name}_tags")
+    for g, s, tags in zip(project(land["geometry"].to_numpy(zero_copy_only=False)), land["subtype"].to_pylist(),
+                          land["source_tags"].to_pylist()):
+        cls = TIDAL_OSM.get(dict(tags or {}).get("wetland")) if s == "wetland" else None
+        if cls and g.geom_type in ("Polygon", "MultiPolygon"):
+            out.append((g, cls))
+    return out
+
+
+def tidal_heights(raw):
+    """Flats keep the lidar's channels and ripples but squashed towards the waterline (0 m),
+    so they read as wet mud and sand at mid tide with water left in the channels."""
+    return np.clip(0.15 + 0.3 * (raw - 0.15), -1.5, 1.0)
+
 
 UPLAND_SHRUB = 200  # temporary class while rasterising
 UPLAND_M = 250
@@ -482,7 +505,8 @@ def main(area_name):
     for g, s, c in zip(project(water["geometry"].to_numpy(zero_copy_only=False)), water["subtype"].to_pylist(), water["class"].to_pylist()):
         if c == "swimming_pool":
             continue
-        value = C["sea"] if s in ("ocean", "physical") and has_coast else C["water"]
+        # Tidal channels share the sea's level, so the sea draws them.
+        value = C["sea"] if (s in ("ocean", "physical") or c == "tidal_channel") and has_coast else C["water"]
         if g.geom_type in ("Polygon", "MultiPolygon"):
             r.polygon(g, value)
         else:
@@ -530,6 +554,18 @@ def main(area_name):
         # Keep the coastline authoritative over land-use and harbour polygons that spill into the sea.
         spill = sea_mask & ~np.isin(cover_arr, [C["sand"], C["major_road"], C["minor_road"], C["rail"]])
         cover_arr[spill] = C["sea"]
+        # Mapped tidal flats and saltmarsh, which mostly lie inside the coastline (mean high
+        # water), get their own surfaces instead of open sea (docs/coastal-cliffs.md section 6).
+        tidal = Raster(x0, y1, texel, cw, ch, 255)
+        tidal.hole_fill = 255
+        feats = tidal_features(area_name, bbox)
+        for g, cls in sorted(feats, key=lambda f: f[1] == "intertidal"):
+            tidal.polygon(g, C[cls])
+        tv = np.asarray(tidal.img)
+        put = (tv != 255) & np.isin(cover_arr, [C["sea"], C["sand"], C["wetland"], C["fields"], C["water"]])
+        cover_arr[put] = tv[put]
+        print(f"tidal: {len(feats)} polygons, {(cover_arr == C['intertidal']).mean():.1%} flats,"
+              f" {(cover_arr == C['saltmarsh']).mean():.1%} saltmarsh")
     Image.fromarray(cover_arr, "L").save(out / "cover.png", optimize=True)
 
     # Force the heightmap to agree with the coastline, sampled at grid points.
@@ -543,6 +579,7 @@ def main(area_name):
         sea = cover_arr == C["sea"]
         signed = (distance_transform_edt(~sea) - distance_transform_edt(sea)) * texel
         d = signed[gj, gi]
+        raw = heights.copy()
         heights = np.where(d > 0, heights, sea_bed(heights, d, step))
         far = np.where(d > 0, np.maximum(heights, 0.5), np.minimum(heights, -2.0))
         t = np.clip((np.abs(d) - 20) / 20, 0, 1)
@@ -552,6 +589,10 @@ def main(area_name):
         cliff_lines = [g for g, s, c in zip(land_geoms, land_sub, land_cls) if s == "physical" and c == "cliff"]
         c = cliffness(heights, d, step, cliff_lines, (x0, y1, texel, cw, ch), (gj, gi))
         heights = shore * (1 - c) + far * c
+        flats = grid_cover == C["intertidal"]
+        heights[flats] = tidal_heights(raw[flats])
+        marsh = grid_cover == C["saltmarsh"]
+        heights[marsh] = np.maximum(raw[marsh], 0.4)
         coast_cells = np.abs(d) < 2 * spacing
         coast_stats = {"cliffShare": round(float((c[coast_cells] > 0.5).mean()), 3) if coast_cells.any() else 0}
         print("coast", coast_stats)
