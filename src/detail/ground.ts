@@ -197,7 +197,7 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
     surfBump = (ripple * 0.015 + fbm(p / 2.0) * 0.05) * bumpFade;
     rough = mix(0.45, 0.15, wet);
     surfWater = 0.08 + 0.3 * wet;
-    return bed * (0.85 + 0.25 * n) * mix(1.0, 0.6, wet);
+    return bed * (0.85 + 0.25 * n) * mix(1.0, 0.75, wet);
   }
   if (k == 21) {
     // Saltmarsh: tussocky green-brown sward.

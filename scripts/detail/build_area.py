@@ -510,8 +510,9 @@ def main(area_name):
     for g, s, c in zip(project(water["geometry"].to_numpy(zero_copy_only=False)), water["subtype"].to_pylist(), water["class"].to_pylist()):
         if c == "swimming_pool":
             continue
-        # Tidal channels share the sea's level, so the sea draws them.
-        value = C["sea"] if (s in ("ocean", "physical") or c == "tidal_channel") and has_coast else C["water"]
+        # Tidal creeks are drawn like the flats: mud with water left in the bottom.
+        value = (C["sea"] if s in ("ocean", "physical") else C["intertidal"] if c == "tidal_channel"
+                 else C["water"]) if has_coast else C["water"]
         if g.geom_type in ("Polygon", "MultiPolygon"):
             r.polygon(g, value)
         else:
@@ -557,7 +558,7 @@ def main(area_name):
         print(f"{kind}: {len(feats)} polygons, {put.mean():.1%} of the area")
     if has_coast:
         # Keep the coastline authoritative over land-use and harbour polygons that spill into the sea.
-        spill = sea_mask & ~np.isin(cover_arr, [C["sand"], C["major_road"], C["minor_road"], C["rail"]])
+        spill = sea_mask & ~np.isin(cover_arr, [C["sand"], C["major_road"], C["minor_road"], C["rail"], C["intertidal"]])
         cover_arr[spill] = C["sea"]
         # Mapped tidal flats and saltmarsh, which mostly lie inside the coastline (mean high
         # water), get their own surfaces instead of open sea (docs/coastal-cliffs.md section 6).

@@ -114,7 +114,7 @@ function seaHeights(area: Area): Float32Array {
     for (let i = 0; i < meta.width; i++) {
       const k = j * meta.width + i;
       const flat = flats !== undefined && coverAt(area, i * meta.spacing, j * meta.spacing) === flats;
-      out[k] = flat ? -2 : Math.max(heights[k], -2);
+      out[k] = flat ? 1 : Math.max(heights[k], -2);
     }
   }
   return out;
@@ -337,8 +337,8 @@ export async function createDetailTerrain(
   // The sea finds the coast from these heights (height over gradient) and shoals towards it,
   // so it gets the shore only: the sea bed below 2 m is a made-up shelf (build_area.py
   // sea_bed) whose slope it would read as coast and draw as rings of surf.
-  // Tidal flats count as open water too, or the sea would break surf over every mud bank;
-  // where they stand above the water they hide it anyway.
+  // Tidal flats and creeks count as land, so water left in their channels lies calm instead
+  // of breaking surf against every mud bank.
   const grounds = tiles.map(({ area }) => ({
     heights: seaHeights(area),
     width: area.meta.width,
