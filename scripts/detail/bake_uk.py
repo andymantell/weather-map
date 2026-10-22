@@ -80,7 +80,10 @@ MIN_FREE_GB = 6
 # Steps that peak at several GB (build_area reaches 5.5 GB on a town), and how many of them
 # may run at once, so 31 workers can't all be in one at the same moment.
 # External's lidar and habitat hosts throttle (403) when asked by many workers at once.
-HEAVY = {"area": 14, "masses": 14, "external": 8}
+# Imagery mostly waits on Sentinel-2 reads from us-west-2, so it runs in its own slots beside
+# the CPU ones, like the lidar.
+HEAVY = {"area": 20, "masses": 14, "external": 8, "imagery": 24}
+DOWNLOADS = ("external", "imagery")
 # Workers run single-threaded maths at below-normal priority, so the desktop stays responsive.
 WORKER_ENV = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1",
                   GDAL_CACHEMAX="256", PYTHONUNBUFFERED="1", PYTHONIOENCODING="utf-8")
@@ -303,6 +306,8 @@ class Bake:
         if name == "external":
             # Outside England this only asks the Forestry Commission for woodland: no slot.
             slots = [self.slots["external"]] if england else []
+        elif name in DOWNLOADS:
+            slots = [self.slots[name]]
         else:
             slots = [self.cpu] + ([self.slots[name]] if name in self.slots else [])
         with self.lock:
@@ -453,7 +458,7 @@ class Bake:
             f" ({len(self.tiles) - len(todo)} of {len(self.tiles)} already done)")
         # More tiles in hand than workers, so tiles queued for a lidar slot never leave the CPU
         # idle; the slots above keep the real load at `workers` CPU steps and 8 downloads.
-        pool = ThreadPoolExecutor(self.workers * 3)
+        pool = ThreadPoolExecutor(self.workers * 5)
         futures = [pool.submit(self.run_tile, t) for t in todo]
         progress = open(ba.BAKE / "progress.log", "a", encoding="utf-8")
         try:

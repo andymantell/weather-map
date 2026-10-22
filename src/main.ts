@@ -86,6 +86,8 @@ async function init() {
   }
   const projection = new Projection(heightmap.meta.proj);
   atmosphere = new Atmosphere(renderer, scene, camera, projection, sun, keyDirection);
+  const stargazing = document.getElementById('stargazing') as HTMLInputElement;
+  stargazing.addEventListener('change', () => atmosphere?.setStargazing(stargazing.checked));
 
   const terrain = createTerrain(heightmap);
   scene.add(terrain);

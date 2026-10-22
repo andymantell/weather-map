@@ -411,6 +411,11 @@ export class Atmosphere {
   }
 
   /** Jump exposure to its target next frame instead of adapting, e.g. before a screenshot. */
+  /** Stargazing mode: stars and Milky Way as on a dark moonless night, while the land keeps tonight's light. */
+  setStargazing(on: boolean): void {
+    this.stars.uniforms.uStargazing.value = on ? 1 : 0;
+  }
+
   snapExposure(): void {
     this.snap = true;
     this.snapOnReadback = true;

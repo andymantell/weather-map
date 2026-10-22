@@ -166,6 +166,15 @@ def scene_pixels(path, meta):
     return rgb, clear, loose
 
 
+def try_scene(path, meta):
+    """scene_pixels, or None for the odd listed scene whose files are missing from the bucket."""
+    try:
+        return scene_pixels(path, meta)
+    except rasterio.errors.RasterioIOError as error:
+        print(f"  {path.split('/')[-1]}: skipped ({str(error)[:80]})")
+        return None
+
+
 def pick(found, meta, limit):
     """Read scenes, least cloudy first, keeping up to `limit` that see enough of the area."""
     kept = []
@@ -173,8 +182,10 @@ def pick(found, meta, limit):
         # Read in batches so we stop soon after enough scenes are found.
         for i in range(0, len(found), 6):
             batch = found[i:i + 6]
-            for (cloud, nodata, path), (rgb, clear, loose) in zip(
-                    batch, ex.map(lambda s: scene_pixels(s[2], meta), batch)):
+            for (cloud, nodata, path), got in zip(batch, ex.map(lambda s: try_scene(s[2], meta), batch)):
+                if got is None:
+                    continue
+                rgb, clear, loose = got
                 share = clear.mean()
                 print(f"  {path.split('/')[-1]}: tile cloud {cloud:.0f}%, clear here {share:.0%}")
                 if share >= MIN_SHARE and len(kept) < limit:

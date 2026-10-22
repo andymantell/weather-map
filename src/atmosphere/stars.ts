@@ -96,6 +96,8 @@ export class StarField {
     uStarDir: { value: floatTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat) },
     uStarColour: { value: floatTexture(new Float32Array(4), 1, 1, THREE.RGBAFormat) },
     uStarsReady: { value: 0 },
+    /** Stargazing mode (the HUD's toggle), 0 or 1: the sky drawn as on a dark moonless night. */
+    uStargazing: { value: 0 },
     /** The Milky Way's glow (public/data/milkyway.jpg), log-encoded radiance. */
     uMilkyWay: { value: new THREE.Texture() },
     /** x, y: log2 of the radiance at codes 0 and 1; z: which way right ascension runs across the map. */

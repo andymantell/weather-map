@@ -452,6 +452,7 @@ uniform highp sampler2D uStarCells;
 uniform highp sampler2D uStarDir;
 uniform highp sampler2D uStarColour;
 uniform float uStarsReady;
+uniform float uStargazing;
 uniform sampler2D uMilkyWay;
 uniform vec3 uMilkyWayRange;
 uniform float uMilkyWayReady;
@@ -507,6 +508,9 @@ vec3 twinkle(vec3 dir, float amount, float scint) {
   vec3 chroma = vec3(sin(t * 1.9 + 1.0), sin(t * 2.3 + 2.0), sin(t * 2.9 + 3.0));
   return max(vec3(1.0) + amount * scint * (vec3(w) + chroma * 0.6 * smoothstep(0.25, 0.6, scint)), 0.0);
 }
+// Stargazing mode's sky: the faintest star of a natural dark site, and the pre-exposure of a moonless night.
+const float DARK_LIMIT = 6.8;
+const float DARK_EXPOSURE = 3.0e6;
 // The faintest star the dark-adapted eye can see against a sky of radiance B (relative to sunlight per steradian):
 // Schaefer's (1990) relation as usually quoted, NELM = 7.93 - 5 log10(10^(4.316 - b/5) + 1), b in mag/arcsec^2.
 // About 6.6 under a natural dark sky, 4 in a suburb, 3 under a full moon.
@@ -664,9 +668,15 @@ void main() {
     // and so the faintest star it can see here, less what the air takes on the way down.
     vec3 lum3 = vec3(0.2126, 0.7152, 0.0722);
     float background = dot((L + glow) / uSunIlluminance + mw * T, lum3);
-    float limit = nakedEyeLimit(background) + 2.5 * log(max(dot(T, lum3), 1e-6)) / log(10.0);
-    vec3 night = stars(eq, pixelAngle, scint, limit) * uSunIlluminance;
-    night += uSunIlluminance * mw;
+    float extinction = 2.5 * log(max(dot(T, lum3), 1e-6)) / log(10.0);
+    float limit = nakedEyeLimit(background) + extinction;
+    // Stargazing mode, once the sun is well down: the stars and Milky Way as on a dark moonless night, whatever the
+    // moon and town glow, and lifted out of a moonlit exposure to look as they would at a moonless one.
+    float gaze = uStargazing * smoothstep(-0.02, -0.12, uSunDir.y);
+    limit = mix(limit, max(limit, DARK_LIMIT + extinction), gaze);
+    float boost = mix(1.0, clamp(DARK_EXPOSURE / max(uPreExposure, 1.0), 1.0, 60.0), gaze);
+    vec3 night = stars(eq, pixelAngle, scint, limit) * uSunIlluminance * boost;
+    night += uSunIlluminance * mw * boost;
     vec3 behind = night;
 
     // The moon, hiding what is behind it.
