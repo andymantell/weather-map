@@ -224,20 +224,24 @@ def extract(kind):
 def tile_list():
     """Tiles touching GB's land, each with whether it touches England (for the lidar)."""
     path = ba.BAKE / "tiles.json"
-    if path.exists():
-        return read_json(path, None)
+    known = read_json(path, None)
+    if known and all("wales" in t for t in known):
+        return known
     div = pq.read_table(ba.UK / "division_area.parquet")
     rows = div.select(["subtype", "class", "region"]).to_pylist()
     geoms = ba.project(div["geometry"].to_numpy(zero_copy_only=False))
     land = [g for g, r in zip(geoms, rows) if r["subtype"] == "country" and r["class"] == "land"]
     england = [g for g, r in zip(geoms, rows) if r["subtype"] == "region" and r["region"] == "GB-ENG"
                and r["class"] == "land"]
+    wales = [g for g, r in zip(geoms, rows) if r["subtype"] == "region" and r["region"] == "GB-WLS"
+             and r["class"] == "land"]
     if not land or not england:
         kinds = sorted({(r["subtype"], r["class"], r["region"]) for r in rows if r["subtype"] in ("country", "region")})
         raise SystemExit(f"GB or England outline not found in division_area; have {kinds}")
-    gb, eng = shapely.union_all(land), shapely.union_all(england)
+    gb, eng, wls = shapely.union_all(land), shapely.union_all(england), shapely.union_all(wales)
     shapely.prepare(gb)
     shapely.prepare(eng)
+    shapely.prepare(wls)
     x0, y0, x1, y1 = gb.bounds
     t = ba.TILE_M
     tiles = []
@@ -245,9 +249,10 @@ def tile_list():
         for i in range(int(np.floor(x0 / t)), int(np.ceil(x1 / t))):
             box = shapely.box(i * t, j * t, (i + 1) * t, (j + 1) * t)
             if gb.intersects(box):
-                tiles.append({"id": f"{i}_{j}", "england": bool(eng.intersects(box))})
+                tiles.append({"id": f"{i}_{j}", "england": bool(eng.intersects(box)), "wales": bool(wls.intersects(box))})
     write_json(path, tiles)
-    say(f"{len(tiles)} tiles touch GB's land, {sum(t['england'] for t in tiles)} of them England")
+    say(f"{len(tiles)} tiles touch the UK's land, {sum(t['england'] for t in tiles)} of them England,"
+        f" {sum(t['wales'] for t in tiles)} Wales")
     return tiles
 
 
@@ -317,7 +322,8 @@ class Bake:
     def done(self, tile_id):
         return (ba.BAKE / tile_id / "done.json").exists()
 
-    def step(self, tile_id, name, script, england, log):
+    def step(self, tile_id, name, script, tile, log):
+        england = tile["england"]
         if name == "external":
             # Outside England this only asks the Forestry Commission for woodland: no slot.
             slots = [self.slots["external"]] if england else []
@@ -337,12 +343,12 @@ class Bake:
                 taken.append(slot)
             with self.lock:
                 self.running[tile_id] = name
-            return self.launch(tile_id, name, script, england, log)
+            return self.launch(tile_id, name, script, tile, log)
         finally:
             for slot in taken:
                 slot.release()
 
-    def launch(self, tile_id, name, script, england, log):
+    def launch(self, tile_id, name, script, tile, log):
         need = PEAK_GB.get(name, 1.0)
         with self.memory:
             while (self.reserved + need > budget()
@@ -352,16 +358,18 @@ class Bake:
                 self.memory.wait(timeout=5)
             self.reserved += need
         try:
-            return self.run_step(tile_id, name, script, england, log)
+            return self.run_step(tile_id, name, script, tile, log)
         finally:
             with self.memory:
                 self.reserved -= need
                 self.memory.notify_all()
 
-    def run_step(self, tile_id, name, script, england, log):
+    def run_step(self, tile_id, name, script, tile, log):
         args = [sys.executable, "-u", script, tile_id]
-        if name == "external" and not england:
+        if name == "external" and not tile["england"]:
             args.append("--skip-lidar")
+        if name == "external" and tile.get("wales"):
+            args.append("--wales")
         log.write(f"\n=== {name} {datetime.datetime.now():%Y-%m-%d %H:%M:%S}\n")
         log.flush()
         t0 = time.time()
@@ -400,7 +408,7 @@ class Bake:
                         continue
                     with self.lock:
                         self.running[tile_id] = name
-                    steps[name] = self.step(tile_id, name, script, tile["england"], log)
+                    steps[name] = self.step(tile_id, name, script, tile, log)
                     write_json(tdir / "steps.json", steps)
             write_json(tdir / "done.json", {"steps": steps, "at": time.time()})
             if not self.keep_cache:
@@ -430,7 +438,7 @@ class Bake:
     def clean(self, tile_id):
         """Drops the tile's big intermediate files (lidar, woodland and habitat maps, scenes), which
         nothing reads once it's done. Overture extracts and terrain tiles are shared, so stay."""
-        for name in ("ndsm.tif", "dtm.tif", "nfi.geojson", "phi.geojson"):
+        for name in ("ndsm.tif", "dtm.tif", "nfi.geojson", "phi.geojson", "lidar.json"):
             (ba.EXTERNAL / f"{tile_id}_{name}").unlink(missing_ok=True)
         x0, _, _, y1 = ba.tile_square(tile_id)
         for p in (ba.CACHE / "imagery").glob(f"*-{x0}-{y1}-scl.npz"):
@@ -449,7 +457,7 @@ class Bake:
                 **{k: meta.get(k) for k in ("xMin", "xMax", "yMin", "yMax", "hasCoast", "buildings", "trees")},
                 "roadsKm": (meta.get("roads") or {}).get("km"),
                 "imagery": "imagery" in meta,
-                "lidar": "Environment Agency" in meta.get("attribution", ""),
+                "lidar": "LIDAR" in meta.get("attribution", "").upper(),
                 "files": {p.name: p.stat().st_size for p in sorted(tdir.iterdir())
                           if p.is_file() and p.name not in ("done.json", "steps.json")},
             })

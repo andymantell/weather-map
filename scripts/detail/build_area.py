@@ -34,7 +34,7 @@ import pyarrow.parquet as pq
 import shapely
 import shapely.geometry
 from PIL import Image, ImageDraw
-from scipy.ndimage import distance_transform_edt, gaussian_filter, maximum_filter
+from scipy.ndimage import distance_transform_edt, gaussian_filter, maximum_filter, median_filter
 from pyproj import Transformer
 
 PROJ = "+proj=laea +lat_0=54.9 +lon_0=-2.5 +x_0=0 +y_0=0 +ellps=GRS80 +units=m"
@@ -271,6 +271,20 @@ def sample_elevation(lon, lat, z=15):
     n = tx1 - tx0 + 1
     mosaic = np.vstack([np.hstack(tiles[r * n:(r + 1) * n]) for r in range(ty1 - ty0 + 1)])
     del tiles
+    # The tiles carry the odd spike (e.g. blobs of -3800 m on farmland in Pembrokeshire). Nothing
+    # round the UK lies below -400 m, so fill those from the nearest sound pixel, then replace any
+    # lone pixel far from the median of its neighbours with that median.
+    hole = mosaic < -400
+    if hole.any():
+        print(f"terrain tiles: {hole.sum()} pixels below -400 m filled")
+        idx = distance_transform_edt(hole, return_distances=False, return_indices=True)
+        mosaic = mosaic[idx[0], idx[1]]
+    med = median_filter(mosaic, size=5, mode="nearest")
+    spikes = np.abs(mosaic - med) > 100
+    if spikes.any():
+        print(f"terrain tiles: {spikes.sum()} spike pixels removed")
+        mosaic[spikes] = med[spikes]
+    del med
     px = (px - tx0) * 256 - 0.5
     py = (py - ty0) * 256 - 0.5
     ix = np.clip(np.floor(px).astype(int), 0, mosaic.shape[1] - 2)
@@ -816,7 +830,10 @@ def main(area_name):
     }
     extra = []
     if lidar.src is not None:
-        extra.append("Environment Agency LIDAR Composite 2022 (© Environment Agency copyright and/or database right 2022)")
+        # fetch_external.py records which surveys the lidar came from; older fetches were the EA's only.
+        sources = EXTERNAL / f"{area_name}_lidar.json"
+        extra += (json.loads(sources.read_text())["sources"] if sources.exists() else
+                  ["Environment Agency LIDAR Composite 2022 (© Environment Agency copyright and/or database right 2022)"])
     if (EXTERNAL / f"{area_name}_nfi.geojson").exists():
         extra.append("National Forest Inventory © Forestry Commission")
     if (EXTERNAL / f"{area_name}_phi.geojson").exists():

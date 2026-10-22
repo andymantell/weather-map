@@ -29,6 +29,7 @@ import urllib.request
 
 import numpy as np
 import rasterio
+import shapely.geometry
 from pyproj import Transformer
 from rasterio.io import MemoryFile
 from rasterio.transform import from_origin
@@ -188,8 +189,59 @@ def save_chunk(path, arrays):
         tmp.unlink(missing_ok=True)  # another worker wrote the same chunk first
 
 
-def fetch_lidar(area, bbox):
-    """Both lidar rasters (nDSM and DTM) for the area, from the shared chunk cache."""
+# Welsh Government LiDAR 2020-23 (DataMapWales): a WFS catalogue of 1 km tiles, each with a 1 m
+# DTM and DSM GeoTIFF (float32 metres, BNG) on Azure. Fills what the EA's England-only data lacks.
+WALES_WFS = "https://datamap.gov.wales/geoserver/ows"
+WALES_TYPE = "geonode:welsh_government_lidar_tile_catalogue_2020_2023"
+WALES_CACHE = LIDAR_CACHE.parent / "wales"
+SOURCES = {
+    "ea": "Environment Agency LIDAR Composite 2022 (© Environment Agency copyright and/or database right 2022)",
+    "wales": "Welsh Government LiDAR 2020-2023 (DataMapWales)",
+}
+
+
+def wales_tiles(x0, y0, x1, y1):
+    """The Welsh surveys of each 1 km square in a BNG box, latest first: {(east, north): [(dtm, dsm) URLs]}."""
+    page = json.loads(get(WALES_WFS, {
+        "service": "WFS", "version": "1.0.0", "request": "GetFeature", "typeName": WALES_TYPE,
+        "outputFormat": "application/json", "srsName": "EPSG:27700", "bbox": f"{x0},{y0},{x1},{y1}",
+    }))
+    best = {}
+    for f in page["features"]:
+        pr = f["properties"]
+        bx0, by0, _, _ = shapely.geometry.shape(f["geometry"]).bounds
+        key = (round(bx0 / 1000) * 1000, round(by0 / 1000) * 1000)
+        day, month, year = pr["date"].split("-")
+        when = f"{year}{month}{day}"
+        best.setdefault(key, []).append((when, "https://" + pr["dtm_link"], "https://" + pr["dsm_link"]))
+    return {k: [u[1:] for u in sorted(v, reverse=True)] for k, v in best.items()}
+
+
+def wales_tile(url):
+    """A Welsh lidar tile (cached on disk) as a float32 array in metres, NaN where empty; None
+    where the catalogue links to a file that isn't there (a few do)."""
+    path = WALES_CACHE / url.split("/")[-1]
+    if not path.exists():
+        try:
+            data = get(url)
+        except RuntimeError as error:
+            if getattr(error.__cause__, "code", 0) != 404:
+                raise
+            print(f"  wales tile missing: {url.split('/')[-1]}")
+            return None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ba.write_atomic(path, lambda p: p.write_bytes(data))
+    with rasterio.open(path) as src:
+        a = src.read(1).astype(np.float32)
+        if src.nodata is not None:
+            a[a == src.nodata] = np.nan
+    a[a < -1000] = np.nan
+    return a
+
+
+def fetch_lidar(area, bbox, ea=True, wales=False):
+    """Both lidar rasters (nDSM and DTM) for the area: the Environment Agency's (England) from the
+    shared chunk cache, with gaps filled from the Welsh Government's tiles when wales is set."""
     ndsm_out, dtm_out = OUT / f"{area}_ndsm.tif", OUT / f"{area}_dtm.tif"
     if ndsm_out.exists() and dtm_out.exists():
         print("have", ndsm_out, dtm_out)
@@ -203,7 +255,7 @@ def fetch_lidar(area, bbox):
     ndsm = np.full((h, w), -1, np.int16)
     dtm = np.full((h, w), -32768, np.int16)
     missing = cached = 0
-    for cy in range(y0, y1, CHUNK):
+    for cy in range(y0, y1, CHUNK) if ea else []:
         for cx in range(x0, x1, CHUNK):
             if not covs and not (LIDAR_CACHE / f"{cx}_{cy}.npz").exists():
                 covs = [coverage_id(DTM_WCS), coverage_id(DSM_WCS)]
@@ -214,10 +266,39 @@ def fetch_lidar(area, bbox):
                 continue
             r0, c0 = y1 - cy - CHUNK, cx - x0  # rows run north to south
             dtm[r0:r0 + CHUNK, c0:c0 + CHUNK], ndsm[r0:r0 + CHUNK, c0:c0 + CHUNK] = got
+    used = ["ea"] if ea and missing < (w // CHUNK) * (h // CHUNK) else []
+    if wales:
+        tiles = wales_tiles(x0, y0, x1, y1)
+        filled = 0
+        for (tx, ty), surveys in sorted(tiles.items()):
+            if not (x0 <= tx and tx + 1000 <= x1 and y0 <= ty and ty + 1000 <= y1):
+                continue
+            r0, c0 = y1 - ty - 1000, tx - x0
+            gap = dtm[r0:r0 + 1000, c0:c0 + 1000] == -32768
+            if not gap.any():
+                continue
+            for dtm_url, dsm_url in surveys:
+                t, s = wales_tile(dtm_url), wales_tile(dsm_url)
+                if t is not None and s is not None and t.shape == s.shape == (1000, 1000):
+                    break
+            else:
+                print(f"  wales square {tx},{ty}: no usable survey")
+                continue
+            d = np.where(np.isnan(t), -32768, np.clip(np.round(t * 10), -32000, 32000)).astype(np.int16)
+            n_ = np.clip((s - t) * 10, -1, 32000)
+            n_ = np.where(np.isnan(n_), -1, n_).astype(np.int16)
+            dtm[r0:r0 + 1000, c0:c0 + 1000][gap] = d[gap]
+            ndsm[r0:r0 + 1000, c0:c0 + 1000][gap] = n_[gap]
+            filled += 1
+        print(f"  wales: {len(tiles)} tiles listed, {filled} used")
+        if filled:
+            used.append("wales")
     write_tif(dtm_out, dtm, x0, y1, -32768)
     write_tif(ndsm_out, ndsm, x0, y1, -1)
+    # Which surveys the rasters came from, for build_area.py's attribution.
+    (OUT / f"{area}_lidar.json").write_text(json.dumps({"sources": [SOURCES[k] for k in used]}))
     n = (w // CHUNK) * (h // CHUNK)
-    print("wrote", ndsm_out, dtm_out, f"({n} chunks: {cached} cached, {missing} without data)")
+    print("wrote", ndsm_out, dtm_out, f"({n} chunks: {cached} cached, {missing} without data; sources {used})")
 
 
 def fetch_features(url, bbox, out):
@@ -262,14 +343,15 @@ def fetch_wfs(url, type_name, bbox, out):
     print(f"wrote {out} ({len(features)} features)")
 
 
-def main(area, skip_lidar=False):
+def main(area, england=True, wales=False):
     bbox = ba.area(area)["bbox"]
-    if not skip_lidar:
-        fetch_lidar(area, bbox)
+    if england or wales:
+        fetch_lidar(area, bbox, ea=england, wales=wales)
     fetch_features(NFI_URL, bbox, OUT / f"{area}_nfi.geojson")
-    if not skip_lidar:  # the habitat inventory is England-only too, like the lidar
+    if england:  # the habitat inventory is England-only, like the EA's lidar
         fetch_wfs(PHI_WFS, PHI_TYPE, bbox, OUT / f"{area}_phi.geojson")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], "--skip-lidar" in sys.argv)
+    # --skip-lidar: not England (no EA lidar or habitat inventory); --wales: add the Welsh lidar.
+    main(sys.argv[1], england="--skip-lidar" not in sys.argv, wales="--wales" in sys.argv)
