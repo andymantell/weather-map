@@ -123,6 +123,14 @@ uniform float roadRibbons;
 varying vec2 vLocal;
 varying float vHeight;
 varying vec3 vObjNormal;
+
+/** Face normal (true scale, y up) from screen-space derivatives of the local position. */
+vec3 faceNormal() {
+  vec3 pos = vec3(vLocal.x, vHeight, vLocal.y);
+  vec3 n = normalize(cross(dFdx(pos), dFdy(pos)));
+  return n.y < 0.0 ? -n : n;
+}
+
 /** Surface relief (m) for bump shading, set by surfaceColour. */
 float surfBump;
 
@@ -238,10 +246,10 @@ vec3 surfaceColour(vec2 p, out float rough) {
   // Water mapped on sloping ground is a stream down a fold, hidden in the grass: shaded as a
   // lake it shows as a hard sliver (bright, or black) across the hillside. Draw the ground
   // beside it instead; only level water stays water.
-  if (k == 9 && normalize(vObjNormal).y < 0.985) {
-    for (int i = 0; i < 8; i++) {
+  if (k == 9 && min(normalize(vObjNormal).y, faceNormal().y) < 0.995) {
+    for (int i = 0; i < 16; i++) {
       float a = float(i) * 0.785398;
-      int s = coverClass(p + vec2(cos(a), sin(a)) * 10.0);
+      int s = coverClass(p + vec2(cos(a), sin(a)) * (i < 8 ? 10.0 : 25.0));
       if (s != 9) { k = s; break; }
     }
   }
@@ -274,13 +282,6 @@ vec3 surfaceColour(vec2 p, out float rough) {
  * the splash zone and a dark, wet, weedy foot. See docs/coastal-cliffs.md.
  */
 const ROCK = /* glsl */ `
-/** Face normal (true scale, y up) from screen-space derivatives of the local position. */
-vec3 faceNormal() {
-  vec3 pos = vec3(vLocal.x, vHeight, vLocal.y);
-  vec3 n = normalize(cross(dFdx(pos), dFdy(pos)));
-  return n.y < 0.0 ? -n : n;
-}
-
 /**
  * Share of rock from the true-scale slope: none below about 38 degrees, all above about 58.
  * Taken from the steeper of the face and the smoothed vertex normal, since on the adaptive mesh

@@ -326,7 +326,7 @@ Lessons from the GPU checks:
 - The sea finds the coast from height over gradient. Every flats-to-channel step therefore
   looked like a beach to it, and it drew foam along every bank until shelter stopped it.
 - Water mapped on a slope is a stream in a fold. Shaded as a lake, it drew a bright sliver,
-  then a black crack, then a muddy ditch, across the grass. On ground steeper than about 10
+  then a black crack, then a muddy ditch, across the grass. On ground steeper than about 6
   degrees the shader now draws whatever class lies beside the water instead, so only level
   water stays water.
 
