@@ -494,5 +494,10 @@ void main() {
   gl_FragColor = vec4(color, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+  // Dither by about one 8-bit step (triangular noise) so smooth dark gradients, like the night sky, do not band.
+  vec2 fc = gl_FragCoord.xy;
+  float n1 = fract(52.9829189 * fract(dot(fc, vec2(0.06711056, 0.00583715))));
+  float n2 = fract(52.9829189 * fract(dot(fc + vec2(47.0, 17.0), vec2(0.06711056, 0.00583715))));
+  gl_FragColor.rgb += (n1 + n2 - 1.0) / 255.0;
 }
 `;

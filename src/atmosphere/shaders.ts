@@ -455,8 +455,12 @@ uniform float uStarsReady;
 uniform vec4 uBrightDir[BRIGHT_COUNT];
 uniform vec4 uBrightLight[BRIGHT_COUNT];
 uniform vec3 uNightGlow;
+uniform sampler2D uMoonMap;
+uniform float uMoonMapReady;
 
 #define SUN_RADIUS 0.004654
+// Pre-exposed radiance the full moon is held to at night (ACES at the app's exposure turns it a bright grey-white).
+#define MOON_WHITE 1.2
 
 float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -576,6 +580,14 @@ float milkyWay(vec3 eq) {
 // Albedo of the moon's near side in disc coordinates (x to the right of the disc as seen with celestial north up,
 // y up, radius 1): the main maria as soft patches, highlands brighter, Tycho's bright ray crater to the south.
 float moonAlbedo(vec2 q) {
+  if (uMoonMapReady > 0.5) {
+    // The near side from the map: selenographic longitude 0 at the map's centre, east to the right.
+    float z = sqrt(max(1.0 - dot(q, q), 0.0));
+    vec2 uv = vec2(0.5 + atan(q.x, z) / (2.0 * PI), 0.5 + asin(clamp(q.y, -1.0, 1.0)) / PI);
+    float lum = dot(texture(uMoonMap, uv).rgb, vec3(0.2126, 0.7152, 0.0722));
+    // The map is a shaded relief with more contrast than the moon (maria 0.07, highlands 0.16): soften it a little.
+    return 0.12 * pow(lum / 0.27, 0.75);
+  }
   float m = 0.0;
   m += smoothstep(0.32, 0.12, length(q - vec2(-0.28, 0.42)));  // Imbrium
   m += smoothstep(0.2, 0.06, length(q - vec2(0.23, 0.4)));     // Serenitatis
@@ -615,7 +627,7 @@ void main() {
     float scint = clamp(0.08 * pow(airmass, 1.1), 0.0, 0.7);
     vec3 night = stars(eq, pixelAngle, scint) * uSunIlluminance;
     night += uSunIlluminance * 2.2e-9 * milkyWay(eq) * vec3(0.9, 0.93, 1.0);
-    vec3 behind = night + glow;
+    vec3 behind = night;
 
     // The moon, hiding what is behind it.
     float cm = dot(d, uMoonDir);
@@ -634,6 +646,10 @@ void main() {
       float ls = 2.0 * mu0 / (mu0 + mue);
       float earthshine = 3e-4 * (1.0 + dot(uSunDir, -uMoonDir));
       vec3 moon = uSunIlluminance * moonAlbedo(q) * (ls + earthshine) / PI * vec3(1.0, 0.97, 0.92);
+      // Night-adapted, the moon would clip to a white disc; the eye still sees its markings, so hold the full moon
+      // just under white. By day this does nothing.
+      float fullMoon = uSunIlluminance.y * 0.12 / PI;
+      moon *= min(1.0, MOON_WHITE / max(uPreExposure * fullMoon, 1e-20));
       behind = mix(behind, moon, edge);
     }
 
@@ -649,7 +665,8 @@ void main() {
       vec3 sun = uSunIlluminance * limb / (PI * SUN_RADIUS * SUN_RADIUS);
       behind = mix(behind, min(sun, uSunIlluminance * 3000.0), edge);
     }
-    L += behind * T;
+    // Airglow and town glow are in the air, in front of the moon.
+    L += (behind + glow) * T;
   } else {
     L += uNightGlow * 1.5;
   }

@@ -46,6 +46,8 @@ const NIGHT_GLOW = new THREE.Vector3(1.6e-9, 1.8e-9, 2.6e-9);
 const TWILIGHT_ADAPTATION = 0.6;
 const TWILIGHT_KNEE = 1e3;
 const ADAPTATION = 1.03;
+// The moon is drawn twice its real size, which reads better on a screen; its light is unchanged.
+const MOON_DISPLAY_SCALE = 2;
 const MAX_PRE_EXPOSURE = 3e6;
 /** Highest the sky dome is drawn from, km. */
 const SKY_MAX_ALTITUDE = 6;
@@ -215,6 +217,8 @@ export class Atmosphere {
   private clouds?: CloudHookTarget;
   private sampler?: WeatherSampler;
   private snap = true;
+  // Read the sky irradiance at once on the next frame and snap again: the exposure depends on it.
+  private snapOnReadback = true;
   private clock = 0;
   private keyIsMoon = false;
   private readonly displayLights: THREE.Color[] = [];
@@ -295,6 +299,8 @@ export class Atmosphere {
       uMoonDir: { value: this.moonDirection },
       uSunIlluminance: { value: this.sunIlluminance },
       uMoonRadius: { value: 0.0045 },
+      uMoonMap: { value: null as THREE.Texture | null },
+      uMoonMapReady: { value: 0 },
       uCamAlt: camAlt,
       uPreExposure: { value: 1 },
       uDiscs: { value: 1 },
@@ -317,6 +323,13 @@ export class Atmosphere {
         depthWrite: false,
       });
     this.skyMaterial = skyMaterial({});
+    // The moon's near side (a shaded relief map); a sketch of the maria stands in until it loads.
+    new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}textures/moon.jpg`, (map) => {
+      map.colorSpace = THREE.SRGBColorSpace;
+      map.anisotropy = 4;
+      skyUniforms.uMoonMap.value = map;
+      skyUniforms.uMoonMapReady.value = 1;
+    });
     // The environment: no discs or stars (the lights cast those), cloud cover folded in, its own exposure.
     this.envSkyMaterial = skyMaterial({ uDiscs: { value: 0 }, uPreExposure: { value: 1 } });
     const sphere = new THREE.SphereGeometry(1, 64, 32);
@@ -394,11 +407,14 @@ export class Atmosphere {
     if (!fromData) this.followData = false;
     this.time = new Date(time.getTime());
     this.skyAt.set(1e9, 0, 0);
+    this.lastReadback = -1e9;
   }
 
   /** Jump exposure to its target next frame instead of adapting, e.g. before a screenshot. */
   snapExposure(): void {
     this.snap = true;
+    this.snapOnReadback = true;
+    this.lastReadback = -1e9;
   }
 
   get environment(): THREE.Texture | null {
@@ -470,21 +486,30 @@ export class Atmosphere {
   }
 
   private readBackIrradiance(camAlt: number): void {
-    if (this.readbackPending || this.clock - this.lastReadback < 0.4) return;
-    this.readbackPending = true;
-    this.lastReadback = this.clock;
     const { x: w, y: h } = SKY_VIEW_SIZE;
     const sunPixels = new Float32Array(w * h * 4);
     const moonPixels = new Float32Array(w * h * 4);
     const sun = this.sunDirection.clone();
     const moon = this.moonDirection.clone();
+    if (this.snapOnReadback) {
+      // After a snap (a jump in time or a screenshot), read now and stall once: an asynchronous read can come back
+      // seconds later on a slow GPU, leaving the exposure set from the old sky meanwhile.
+      this.snapOnReadback = false;
+      this.lastReadback = this.clock;
+      this.renderer.readRenderTargetPixels(this.skyViewSun, 0, 0, w, h, sunPixels);
+      this.renderer.readRenderTargetPixels(this.skyViewMoon, 0, 0, w, h, moonPixels);
+      this.irradianceFrom(sunPixels, moonPixels, sun, moon, camAlt, this.skyIrradiance);
+      this.snap = true;
+      return;
+    }
+    if (this.readbackPending || this.clock - this.lastReadback < 0.4) return;
+    this.readbackPending = true;
+    this.lastReadback = this.clock;
     Promise.all([
       this.renderer.readRenderTargetPixelsAsync(this.skyViewSun, 0, 0, w, h, sunPixels),
       this.renderer.readRenderTargetPixelsAsync(this.skyViewMoon, 0, 0, w, h, moonPixels),
     ])
-      .then(() => {
-        this.irradianceFrom(sunPixels, moonPixels, sun, moon, camAlt, this.skyIrradiance);
-      })
+      .then(() => this.irradianceFrom(sunPixels, moonPixels, sun, moon, camAlt, this.skyIrradiance))
       .catch((error) => console.warn('Sky irradiance read-back failed', error))
       .finally(() => (this.readbackPending = false));
   }
@@ -505,7 +530,7 @@ export class Atmosphere {
     refract(this.sunDirection.copy(this.sky.sun));
     refract(this.moonDirection.copy(this.sky.moon));
     const u = this.skyMaterial.uniforms;
-    u.uMoonRadius.value = this.sky.moonRadius;
+    u.uMoonRadius.value = this.sky.moonRadius * MOON_DISPLAY_SCALE;
     (u.uEquatorialToWorld.value as THREE.Matrix3).copy(this.sky.equatorialToWorld);
     (u.uJ2000ToWorld.value as THREE.Matrix3).copy(this.sky.j2000ToWorld);
     this.stars.update(this.time);

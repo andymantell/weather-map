@@ -19,9 +19,15 @@ being viewed and thickened or greyed by the UKV weather over the camera.
   slider). The HUD's *Time of day* slider overrides it; *Follow the weather's time* goes back.
 - **Sun disc** with limb darkening, drawn at its real angular size and brightness (capped so it cannot glare through
   thick cloud). The clouds now treat their 1% stopping transmittance as opaque for the same reason.
-- **Moon** at its real size, with its phase lit from the sun's direction (Lommel-Seeliger reflectance, so the full
-  moon looks flat as it does), the main maria and Tycho placed roughly as on the near side, earthshine on the dark
-  limb, and the disc turned to celestial north so its tilt changes through the night. It shows faintly by day.
+- **Moon** drawn at twice its real size (Andy's call: at real size it is a few pixels across; its light is unchanged),
+  with its phase lit from the sun's direction (Lommel-Seeliger reflectance, so the full moon looks flat as it does),
+  the near side from a surface map (`public/textures/moon.jpg`), earthshine on the dark limb, and the disc turned to
+  celestial north so its tilt changes through the night. It shows faintly by day. At night the disc is held just
+  under white instead of following the night exposure, which would clip it to a flat white disc; the eye sees the
+  moon's markings, so the phase and the maria read. Airglow and town glow are in front of it. The map is the
+  `moon_1024.jpg` shaded relief from the three.js examples (MIT repository; the map's own source is not stated there),
+  softened in contrast; NASA's public-domain LROC colour map from the CGI Moon Kit would be the better source, but its
+  host (svs.gsfc.nasa.gov) is not reachable from the build environment.
 - **Moonlight.** At night (sun below about -4°) the key light swaps to the moon: illuminance is the full moon's
   2.5 millionths of sunlight, falling off with phase (Allen's magnitude law). It lights the clouds, casts the detailed
   terrain's shadows and scatters in the air, so a moonlit sky is a faint blue.
@@ -46,10 +52,13 @@ being viewed and thickened or greyed by the UKV weather over the camera.
   ambient and reflections from a prefiltered copy of this sky (`scene.environment`, PMREM), re-baked when the sun or
   moon moves or the cloud cover changes. Under cloud the copy turns into the cloud base, so lighting goes flat and grey.
   The hemisphere light is gone.
+- **Output dithering.** The final composite adds about one 8-bit step of triangular noise, so the smooth, dark
+  gradient of a moonlit sky does not band into visible rings (it did, round the moon's glow).
 - **Exposure.** All light is physical and relative to sunlight, then multiplied by a pre-exposure that adapts like an
   eye over about a second: 85% of the way from noon to a moonlit night, so night is still darker and bluer than day.
   The clouds keep their own exposure and the composite rescales them, so adaptation does not restart their
-  accumulation. The old fixed sun (3.2 at 28°) is the reference, so the materials and clouds keep their tuning at
+  accumulation. A jump in time (or `snapExposure()`) reads the sky's light back at once, so the exposure is right on
+  the next frame even on a slow GPU. The old fixed sun (3.2 at 28°) is the reference, so the materials and clouds keep their tuning at
   midday.
 
 ## Files
@@ -63,6 +72,8 @@ being viewed and thickened or greyed by the UKV weather over the camera.
 | `src/atmosphere/localWeather.ts` | Cover, deck, key-light visibility and screen-level visibility over a point |
 | `pipeline/ukv_surface.py` | Bakes visibility, fog fraction and humidity: `public/data/ukv-surface.{png,json}` |
 | `scripts/atmosphere/shots.mjs` | Screenshots and frame times at several times of day |
+| `scripts/atmosphere/moon.mjs` | Close-ups of the moon through a month (size, phase, markings) |
+| `public/textures/moon.jpg` | The moon's surface map (equirectangular, 1024x512) |
 
 Hooks elsewhere: `src/weather/clouds.ts` takes the atmosphere's GLSL and uniforms (`options.atmosphere`) and exposes
 `lighting`; the composite in `cloudShaders.ts` applies aerial perspective and pre-exposure, and still composites when
