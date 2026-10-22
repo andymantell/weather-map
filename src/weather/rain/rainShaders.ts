@@ -266,6 +266,7 @@ in vec2 vTex;
 in float vDark;
 in float vSide;
 uniform float uStreakScale;  // streaks per km across the curtain
+uniform float uAloft;        // 0 with the camera near the ground, 1 from a few km up
 out vec4 outColor;
 
 void main() {
@@ -277,11 +278,15 @@ void main() {
   // Streaks stretched along the fall, scrolling with it; shorter where the fall points at the camera.
   vec2 q = vTex * uStreakScale * vec2(1.0, 1.0 / mix(1.0, 8.0, vSide));
   float s = vnoise(q) * 0.6 + vnoise(q * vec2(2.3, 1.7) + 4.1) * 0.4;
-  float streaks = mix(0.15, 1.0, smoothstep(0.35, 0.75, s));
-  float a = vAlpha * across * alongFade * streaks * occlusion(vW);
+  // Strong streaks help the rain read from the map; seen from the ground a shaft is a soft veil with faint texture.
+  float streaks = mix(mix(0.7, 0.15, uAloft), 1.0, smoothstep(0.35, 0.75, s));
+  float a = vAlpha * across * alongFade * streaks * occlusion(vW) * mix(0.6, 1.0, uAloft);
   if (a < 0.002) discard;
-  // Light rain is a pale blue-grey haze, heavy rain a dark grey curtain.
-  vec3 color = mix(vec3(0.52, 0.58, 0.68), vec3(0.22, 0.25, 0.3), vDark);
+  // From the map, light rain is a pale blue-grey haze over the cloud and heavy rain a darker grey. From the ground a
+  // shaft is lit grey air, close to the brightness of the sky behind it, so it stays pale and nearly neutral.
+  vec3 fromMap = mix(vec3(0.52, 0.58, 0.68), vec3(0.22, 0.25, 0.3), vDark);
+  vec3 fromGround = mix(vec3(0.72, 0.74, 0.77), vec3(0.5, 0.52, 0.55), vDark);
+  vec3 color = mix(fromGround, fromMap, uAloft);
   color *= uLight;
   outColor = vec4(color, a);
 }

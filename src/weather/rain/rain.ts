@@ -87,6 +87,7 @@ export function createRainLayer(
     uFar: { value: camera.far },
     uCloudOpacity: { value: 0.75 },
     uThroughCloud: { value: 0.6 },
+    uAloft: { value: 1 },
     uPixel: { value: 1e-3 },
     uLight: { value: new THREE.Color(1, 1, 1) },
   };
@@ -129,6 +130,7 @@ export function createRainLayer(
   const ground = groundAt ?? coarseGround;
   let last = performance.now();
 
+  let throughCloud = shared.uThroughCloud.value;
   const layer: RainLayer = {
     enabled: true,
     light: shared.uLight.value,
@@ -136,7 +138,7 @@ export function createRainLayer(
       shared.uStrength.value = value;
     },
     setThroughCloud(value) {
-      shared.uThroughCloud.value = value;
+      throughCloud = value;
     },
     setParts(veils, streaks) {
       for (const mesh of scene.children) mesh.visible = mesh.renderOrder === 0 ? veils : streaks;
@@ -157,6 +159,9 @@ export function createRainLayer(
       const above = Math.max(camera.position.y - ground(camera.position.x, camera.position.z), 0.01);
       shared.uLapse.value = THREE.MathUtils.clamp(80 * above, 2, 250);
       shared.uRainClock.value += dt * shared.uLapse.value;
+      // Seeing rain through cloud is a map-view aid; from the ground, cloud in front of a shaft hides it.
+      shared.uAloft.value = THREE.MathUtils.smoothstep(above, 0.5, 5);
+      shared.uThroughCloud.value = throughCloud * shared.uAloft.value;
       shared.uFar.value = camera.far;
       renderer.getDrawingBufferSize(size);
       shared.uViewport.value.copy(size);

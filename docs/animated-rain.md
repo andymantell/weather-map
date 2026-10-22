@@ -59,6 +59,10 @@ scale settings) for it.
 - **Occlusion.** Each fragment is tested by hand against the scene's logarithmic depth texture, with a soft edge
   where drops reach the ground. Rain behind cloud is dimmed by the cloud's alpha, and the "Rain through cloud" slider
   (default 0.6) lets some of it show through, so rain under an overcast still reads from above.
+- **Seen from the ground.** A camera height factor (0 near the ground, 1 from about 5 km up) softens the curtains
+  for ground views: pale, nearly neutral grey close to the sky's brightness, faint streak texture, and no rain shown
+  through cloud. The dark, strongly streaked curtains are kept for the map, where they help the rain read over white
+  cloud. (Added after the atmosphere work showed the curtains as dark navy streaks along the horizon at ground level.)
 - **HUD.** An "Animated rain" switch and "Rain strength" and "Rain through cloud" sliders. Rain is drawn only while
   the cloud layer is on, because it needs that layer's depth texture.
 
