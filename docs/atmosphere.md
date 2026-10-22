@@ -25,11 +25,10 @@ being viewed and thickened or greyed by the UKV weather over the camera.
 - **Moonlight.** At night (sun below about -4°) the key light swaps to the moon: illuminance is the full moon's
   2.5 millionths of sunlight, falling off with phase (Allen's magnitude law). It lights the clouds, casts the detailed
   terrain's shadows and scatters in the air, so a moonlit sky is a faint blue.
-- **Stars and Milky Way.** About 31,000 procedural stars on a grid fixed to the celestial sphere, with the real count
-  law (roughly three times as many per magnitude), each carrying its physical illuminance and drawn as a pixel-sized
-  spot, so they appear by themselves as the sky darkens and the moon washes the faint ones out. They turn with
-  sidereal time about the celestial pole. A Milky Way band follows the galactic equator, and a faint airglow plus town
-  glow keeps a moonless night from going black.
+- **Stars, planets and Milky Way.** The real night sky: all 41,000 Hipparcos stars to magnitude 8 and the seven
+  planets, placed for the time and place and each carrying its physical illuminance, so they appear by themselves as
+  the sky darkens and the moon washes the faint ones out. See [night-sky.md](night-sky.md). A Milky Way band follows
+  the galactic equator, and a faint airglow plus town glow keeps a moonless night from going black.
 - **Aerial perspective.** A 32x32x32 froxel volume of in-scattering and transmittance (RGB) in camera space, rendered
   every frame, applied to every scene pixel in the clouds' composite (after the cloud shadow, before the clouds are
   blended) and to the clouds themselves at their mean depth. Distant hills turn blue, then into the horizon's colour;

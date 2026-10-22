@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Projection } from '../projection';
 import { skyState, type SkyState } from './astronomy';
 import { type LocalWeather, type WeatherSampler } from './localWeather';
+import { StarField } from './stars';
 import {
   BOTTOM_RADIUS,
   GROUND_ALBEDO,
@@ -180,6 +181,8 @@ export class Atmosphere {
   private readonly skyMesh: THREE.Mesh;
   private readonly envScene = new THREE.Scene();
   private readonly pmrem: THREE.PMREMGenerator;
+  /** The catalogue stars and the planets. */
+  private readonly stars = new StarField();
   private envTarget?: THREE.WebGLRenderTarget;
   private envState = { sun: new THREE.Vector3(), moon: new THREE.Vector3(), cover: -1, exposure: 0, at: -1e9 };
   private haze: Haze = hazeForVisibility(REFERENCE_VISIBILITY, 0);
@@ -286,7 +289,9 @@ export class Atmosphere {
       uEnvCloudCover: { value: 0 },
       uEnvCloudRadiance: { value: new THREE.Vector3() },
       uEquatorialToWorld: { value: new THREE.Matrix3() },
+      uJ2000ToWorld: { value: new THREE.Matrix3() },
       uTime: { value: 0 },
+      ...this.stars.uniforms,
       uNightGlow: { value: NIGHT_GLOW.clone().multiplyScalar(sunE) },
     };
     const skyMaterial = (overrides: Record<string, THREE.IUniform>) =>
@@ -489,6 +494,8 @@ export class Atmosphere {
     const u = this.skyMaterial.uniforms;
     u.uMoonRadius.value = this.sky.moonRadius;
     (u.uEquatorialToWorld.value as THREE.Matrix3).copy(this.sky.equatorialToWorld);
+    (u.uJ2000ToWorld.value as THREE.Matrix3).copy(this.sky.j2000ToWorld);
+    this.stars.update(this.time);
     // Moonlight: the full moon's share of sunlight, falling off with phase (Allen's magnitude law).
     const alpha = THREE.MathUtils.radToDeg(this.sky.moonPhaseAngle);
     const phase = Math.pow(10, -0.4 * (0.026 * alpha + 4e-9 * Math.pow(alpha, 4)));

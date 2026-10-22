@@ -4,6 +4,8 @@
 // Radiance is physical, relative to the scene's sun illuminance, and multiplied by uPreExposure only where it is
 // drawn, so moonlight (a few millionths of sunlight) keeps its precision. See docs/atmosphere.md.
 
+import { BRIGHT_COUNT, STAR_GRID, STAR_MARGIN, STAR_TEXTURE_WIDTH } from './stars';
+
 export const ATMOSPHERE_COMMON = /* glsl */ `
 #ifndef PI
 #define PI 3.14159265359
@@ -422,6 +424,12 @@ void main() {
  */
 export const skyFragment = /* glsl */ `
 precision highp float;
+#define STAR_GRID ${STAR_GRID}
+#define STAR_TEXTURE_WIDTH ${STAR_TEXTURE_WIDTH}
+#define STAR_MARGIN ${STAR_MARGIN.toFixed(6)}
+#define BRIGHT_COUNT ${BRIGHT_COUNT}
+// Pre-exposed radiance past which a bright star's image grows instead of getting brighter.
+#define BRIGHT_PEAK 2.0
 ${ATMOSPHERE_COMMON}
 ${SKY_VIEW_UV}
 layout(location = 0) out highp vec4 outColor;
@@ -438,7 +446,14 @@ uniform float uDiscs;
 uniform float uEnvCloudCover;
 uniform vec3 uEnvCloudRadiance;
 uniform mat3 uEquatorialToWorld;
+uniform mat3 uJ2000ToWorld;
 uniform float uTime;
+uniform highp sampler2D uStarCells;
+uniform highp sampler2D uStarDir;
+uniform highp sampler2D uStarColour;
+uniform float uStarsReady;
+uniform vec4 uBrightDir[BRIGHT_COUNT];
+uniform vec4 uBrightLight[BRIGHT_COUNT];
 uniform vec3 uNightGlow;
 
 #define SUN_RADIUS 0.004654
@@ -470,39 +485,78 @@ float fbm(vec2 p) {
   return s;
 }
 
-// Stars on a cube-map grid in equatorial coordinates: one per cell, magnitudes following the real count law (about
-// three times as many per magnitude step), drawn as pixel-sized Gaussians carrying each star's illuminance.
-vec3 stars(vec3 eq, float pixelAngle) {
+// The real stars, from the Hipparcos catalogue (see stars.ts): the pixel's cell of a cube-map grid in J2000
+// equatorial coordinates lists every star close enough to light it. Each star is a pixel-sized Gaussian carrying
+// its illuminance, so its brightness against the sky, the moon and the town glow is physical; it twinkles more the
+// more air it shines through.
+float starSeed(vec3 dir) {
+  return fract(sin(dot(dir, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+}
+vec3 twinkle(vec3 dir, float amount, float scint) {
+  float s = starSeed(dir);
+  float t = uTime * (5.0 + 9.0 * s) + 40.0 * s;
+  float w = 0.6 * sin(t) + 0.4 * sin(t * 2.37 + 3.1 * s);
+  // Low down, the air splits the colours and each flickers on its own.
+  vec3 chroma = vec3(sin(t * 1.9 + 1.0), sin(t * 2.3 + 2.0), sin(t * 2.9 + 3.0));
+  return max(vec3(1.0) + amount * scint * (vec3(w) + chroma * 0.6 * smoothstep(0.25, 0.6, scint)), 0.0);
+}
+vec3 stars(vec3 eq, float pixelAngle, float scint) {
+  if (uStarsReady < 0.5) return vec3(0.0);
   vec3 a = abs(eq);
   vec2 face;
   float faceId;
   if (a.x >= a.y && a.x >= a.z) { face = eq.yz / a.x; faceId = eq.x > 0.0 ? 0.0 : 1.0; }
   else if (a.y >= a.z) { face = eq.xz / a.y; faceId = eq.y > 0.0 ? 2.0 : 3.0; }
   else { face = eq.xy / a.z; faceId = eq.z > 0.0 ? 4.0 : 5.0; }
-  const float GRID = 72.0;
-  vec2 g = (face * 0.5 + 0.5) * GRID;
+  ivec2 cell = clamp(ivec2((face * 0.5 + 0.5) * float(STAR_GRID)), ivec2(0), ivec2(STAR_GRID - 1));
+  vec2 entry = texelFetch(uStarCells, ivec2(cell.x, int(faceId) * STAR_GRID + cell.y), 0).rg;
+  int first = int(entry.x);
+  int count = int(entry.y);
+  float sigma = clamp(pixelAngle * 0.7, 1e-6, STAR_MARGIN * 0.25);
+  float norm = 1.0 / (2.0 * PI * sigma * sigma);
   vec3 sum = vec3(0.0);
-  for (int dy = -1; dy <= 1; dy++) {
-    for (int dx = -1; dx <= 1; dx++) {
-      vec2 cell = floor(g) + vec2(dx, dy);
-      vec3 h = hash32(cell + faceId * 131.7);
-      vec2 centre = cell + 0.15 + 0.7 * h.xy;
-      // Cell size in radians is about 2 / GRID on the face.
-      float d = length(g - centre) * (2.0 / GRID);
-      float u = max(hash12(cell * 1.37 + faceId * 71.3), 1e-6);
-      float mag = 6.8 + log(u) / log(10.0) / 0.47;
-      if (mag < -1.5) mag = -1.5 + fract(u * 1e4);
-      // Illuminance relative to the sun's (magnitude -26.74).
-      float e = pow(10.0, -0.4 * (mag + 26.74));
-      float sigma = max(pixelAngle * 0.6, 1e-5);
-      float g2 = exp(-0.5 * d * d / (sigma * sigma)) / (2.0 * PI * sigma * sigma);
-      // Colour from a rough temperature spread: mostly white, some blue, some orange.
-      vec3 tint = mix(vec3(1.0, 0.82, 0.62), vec3(0.78, 0.86, 1.0), h.z);
-      tint = mix(tint, vec3(1.0), 0.5);
-      sum += tint * e * g2;
-    }
+  for (int k = 0; k < 256; k++) {
+    if (k >= count) break;
+    int i = first + k;
+    ivec2 at = ivec2(i % STAR_TEXTURE_WIDTH, i / STAR_TEXTURE_WIDTH);
+    vec4 star = texelFetch(uStarDir, at, 0);
+    // The chord, not the angle from a dot product: float precision runs out for arcsecond separations.
+    vec3 off = eq - star.xyz;
+    float d2 = dot(off, off);
+    if (d2 > 16.0 * sigma * sigma) continue;
+    vec3 colour = texelFetch(uStarColour, at, 0).rgb;
+    sum += colour * star.w * norm * exp(-0.5 * d2 / (sigma * sigma)) * twinkle(star.xyz, 1.0, scint);
+  }
+  // The planets and the brightest stars, drawn here rather than from the grid so that they can grow: a display
+  // cannot show a point as bright as Sirius, so once a point would be past white its light spreads over a larger
+  // disc (as planetarium software does), with a soft glare round it as the eye sees.
+  float exposure = uPreExposure * uSunIlluminance.y;
+  for (int k = 0; k < BRIGHT_COUNT; k++) {
+    vec4 dir = uBrightDir[k];
+    vec3 off = eq - dir.xyz;
+    float d2 = dot(off, off);
+    vec4 light = uBrightLight[k];
+    float peak = dot(light.rgb, vec3(0.2126, 0.7152, 0.0722)) * norm * exposure;
+    float s = sigma * min(pow(max(peak / BRIGHT_PEAK, 1.0), 1.0 / 3.0), 6.0);
+    float gs = 3.0 * s;
+    if (d2 > 16.0 * gs * gs) continue;
+    float point = 0.94 * exp(-0.5 * d2 / (s * s)) / (2.0 * PI * s * s);
+    float glare = 0.06 * exp(-0.5 * d2 / (gs * gs)) / (2.0 * PI * gs * gs);
+    sum += light.rgb * twinkle(dir.xyz, light.w, scint) * (point + glare);
   }
   return sum;
+}
+
+// Atmospheric refraction lifts what is near the horizon by up to half a degree (Bennett 1982): given the direction
+// a pixel looks along, the true direction its light came from.
+vec3 unrefract(vec3 d) {
+  float h = degrees(asin(clamp(d.y, -1.0, 1.0)));
+  if (h > 89.0 || h < -2.0) return d;
+  float hc = max(h, -1.0);
+  float r = 1.0 / tan(radians(hc + 7.31 / (hc + 4.4))) / 60.0;
+  float alt = radians(h - r);
+  vec2 hz = normalize(d.xz);
+  return vec3(hz.x * cos(alt), sin(alt), hz.y * cos(alt));
 }
 
 // The Milky Way: a band about the galactic equator, brightest towards the centre in Sagittarius.
@@ -552,11 +606,14 @@ void main() {
 
   if (uDiscs > 0.5) {
     float pixelAngle = length(fwidth(d));
-    vec3 eq = transpose(uEquatorialToWorld) * d;
-    // Night sky: stars, the Milky Way and a faint airglow (plus town glow, the UK being what it is).
+    // The stars and the Milky Way, where they truly are: through refraction, then precession back to J2000.
+    vec3 eq = transpose(uJ2000ToWorld) * unrefract(d);
+    // Night sky: stars, planets, the Milky Way and a faint airglow (plus town glow, the UK being what it is).
     vec3 glow = uNightGlow * (1.0 + 2.0 * pow(1.0 - max(d.y, 0.0), 4.0));
-    vec3 night = stars(eq, pixelAngle) * uSunIlluminance;
-    night *= 1.0 + 0.35 * sin(uTime * (7.0 + 9.0 * hash12(floor(d.xz * 900.0))) + 30.0 * d.x) * (1.0 - abs(d.y));
+    // Scintillation grows with the air the light comes through: faint overhead, strong near the horizon.
+    float airmass = 1.0 / max(d.y + 0.025, 0.03);
+    float scint = clamp(0.08 * pow(airmass, 1.1), 0.0, 0.7);
+    vec3 night = stars(eq, pixelAngle, scint) * uSunIlluminance;
     night += uSunIlluminance * 2.2e-9 * milkyWay(eq) * vec3(0.9, 0.93, 1.0);
     vec3 behind = night + glow;
 
