@@ -194,14 +194,14 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
     float edge = vHeight + 0.35 * (fbm(p / 30.0) - 0.5) + 0.1 * (fine - 0.5);
     float pool = 1.0 - smoothstep(-0.12, 0.02, edge);
     float wet = 1.0 - smoothstep(0.0, 0.8, edge);
-    vec3 bed = mix(vec3(0.30, 0.27, 0.22), vec3(0.44, 0.40, 0.31), smoothstep(0.3, 0.7, fbm(p / 70.0)));
-    bed *= (0.85 + 0.25 * n) * mix(1.0, 0.82, wet);
+    vec3 bed = mix(vec3(0.36, 0.32, 0.26), vec3(0.50, 0.45, 0.35), smoothstep(0.3, 0.7, fbm(p / 70.0)));
+    bed *= (0.85 + 0.25 * n) * mix(1.0, 0.88, wet);
     float ripple = sin(dot(p, vec2(0.9, 0.4)) * 2.2 + fbm(p / 5.0) * 6.0);
     float wind = vnoise(p / 1.5) * 0.04 + vnoise(p / 6.0 + 3.0) * 0.08;
     surfBump = mix(ripple * 0.015 + fbm(p / 2.0) * 0.05, wind, pool) * bumpFade;
     rough = mix(mix(0.85, 0.6, wet), 0.1, pool);
     // Turbid estuary water: brown-grey, lit mostly by the sky it reflects.
-    return mix(bed, vec3(0.12, 0.12, 0.10), pool);
+    return mix(bed, vec3(0.16, 0.15, 0.12), pool);
   }
   if (k == 21) {
     // Saltmarsh: tussocky green-brown sward.
@@ -334,6 +334,10 @@ if (rockW > 0.0) {
   surfRough = mix(surfRough, rockRough, rockW);
   surfBump = mix(surfBump, rockBump, rockW);
 }
+// Water mapped on sloping ground is a stream down a fold, not a lake: a mirror there
+// reflects the bright horizon as a hard sliver across the hillside, so only level water
+// stays glossy.
+if (surfRough < 0.2) surfRough = mix(0.9, surfRough, smoothstep(0.985, 0.998, min(normalize(vObjNormal).y, faceNormal().y)));
 diffuseColor.rgb = pow(surf, vec3(2.2));
 `;
 
