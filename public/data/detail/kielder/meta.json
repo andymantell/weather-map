@@ -11,7 +11,7 @@
   "coverWidth": 3169,
   "coverHeight": 3197,
   "minHeight": 0.64,
-  "maxHeight": 600.2793716522445,
+  "maxHeight": 600.279371385203,
   "buildings": 1158,
   "buildingStats": {
     "total": 1177,
@@ -19,7 +19,7 @@
     "osm_levels": 25,
     "osm_height": 326,
     "ml": 452,
-    "lidar": 0
+    "lidar": 228
   },
   "trees": 478,
   "hasCoast": true,
@@ -45,7 +45,7 @@
     "felled": 18,
     "mixed": 19
   },
-  "attribution": "Overture Maps Foundation (incl. \u00a9 OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles; Contains modified Copernicus Sentinel data",
+  "attribution": "Overture Maps Foundation (incl. \u00a9 OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles; Environment Agency LIDAR Composite 2022 (\u00a9 Environment Agency copyright and/or database right 2022); National Forest Inventory \u00a9 Forestry Commission; Priority Habitats Inventory \u00a9 Natural England (Open Government Licence v3.0); Contains modified Copernicus Sentinel data",
   "imagery": {
     "pixel": 10,
     "width": 2535,

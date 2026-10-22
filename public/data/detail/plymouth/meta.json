@@ -10,15 +10,16 @@
   "coverTexel": 4,
   "coverWidth": 4370,
   "coverHeight": 3225,
-  "minHeight": -2.881776061270102,
-  "maxHeight": 296.5974736406467,
+  "minHeight": -2.881775954492241,
+  "maxHeight": 296.5974645482879,
   "buildings": 97273,
   "buildingStats": {
     "total": 97788,
     "osm": 80708,
     "osm_levels": 15267,
     "osm_height": 6878,
-    "ml": 17080
+    "ml": 17080,
+    "lidar": 53178
   },
   "trees": 6942,
   "hasCoast": true,
@@ -39,9 +40,12 @@
     "major_road": 13,
     "farmyard": 14,
     "rail": 15,
-    "path": 16
+    "path": 16,
+    "young": 17,
+    "felled": 18,
+    "mixed": 19
   },
-  "attribution": "Overture Maps Foundation (incl. \u00a9 OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles; Contains modified Copernicus Sentinel data",
+  "attribution": "Overture Maps Foundation (incl. \u00a9 OpenStreetMap contributors, ESA WorldCover, Microsoft); AWS Terrain Tiles; Environment Agency LIDAR Composite 2022 (\u00a9 Environment Agency copyright and/or database right 2022); National Forest Inventory \u00a9 Forestry Commission; Priority Habitats Inventory \u00a9 Natural England (Open Government Licence v3.0); Contains modified Copernicus Sentinel data",
   "imagery": {
     "pixel": 10,
     "width": 1748,
