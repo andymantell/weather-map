@@ -334,10 +334,14 @@ if (rockW > 0.0) {
   surfRough = mix(surfRough, rockRough, rockW);
   surfBump = mix(surfBump, rockBump, rockW);
 }
-// Water mapped on sloping ground is a stream down a fold, not a lake: a mirror there
-// reflects the bright horizon as a hard sliver across the hillside, so only level water
-// stays glossy.
-if (surfRough < 0.2) surfRough = mix(0.9, surfRough, smoothstep(0.985, 0.998, min(normalize(vObjNormal).y, faceNormal().y)));
+// Water mapped on sloping ground is a stream down a fold, not a lake: as a mirror it shows
+// the bright horizon, and as dark water a black crack, across the hillside. Only level water
+// stays water; elsewhere it is a damp, rushy strip.
+if (surfRough < 0.2) {
+  float level = smoothstep(0.985, 0.998, min(normalize(vObjNormal).y, faceNormal().y));
+  surf = mix(vec3(0.20, 0.25, 0.13) * (0.85 + 0.3 * vnoise(vLocal / 1.5)), surf, level);
+  surfRough = mix(0.9, surfRough, level);
+}
 diffuseColor.rgb = pow(surf, vec3(2.2));
 `;
 
