@@ -54,7 +54,11 @@
     "pixel": 10,
     "width": 1241,
     "height": 959,
-    "scenes": 14
+    "scenes": 40,
+    "tier1": 0.998333,
+    "tier2": 0.001365,
+    "tier3": 0.000302,
+    "tier4": 0.0
   },
   "roads": {
     "pieces": 1881,
