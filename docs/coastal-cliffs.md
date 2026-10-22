@@ -256,8 +256,87 @@ Andy approved stages 1 and 2, and liked the Tintagel result.
   Environment Agency lidar heights, NFI, PHI, imagery, roads and walls, and views in
   `gpu-shots.mjs`.
 
-Still open: stages 3 to 5. Kielder hasn't been rebuilt with zoom 15 yet. The z15 tiles show
-faint straight seams inland at Tintagel, which are probably joins in the source mosaic.
+Kielder hasn't been rebuilt with zoom 15 yet. The z15 tiles show faint straight seams inland
+at Tintagel, which are probably joins in the source mosaic.
+
+## 9. What's built (stages 3 to 5, 2026-10-22)
+
+Andy asked for stages 3 to 5 one by one. All three are built on the Plymouth and Tintagel
+test tiles and checked on Andy's laptop GPU.
+
+### Stage 3: adaptive mesh
+
+- `write_mesh()` in `scripts/detail/build_area.py` triangulates the fine raster with Delatin
+  (`pydelatin`) to a 1 m maximum error (`MESH_ERROR`). Flat fields get big triangles and
+  cliffs get dense strips.
+- Heights are quantised to 0.25 m first. Every k-th sample along the tile edge is forced in,
+  so the edge meets `height.png` and the skirt with no cracks.
+- `ground.bin` holds the mesh: uint32 vertex and triangle counts, then uint16 column and row
+  and int16 quarter-metre height per vertex, then uint32 indices, counter-clockwise from
+  above. `meta.json` has `mesh: {step, vertices, triangles, maxError}`.
+- In the app, `parseTin`, `indexTin` and `tinHeight` in `src/detail/area.ts` load it and
+  sample it on a 32 m cell index. `heightAt` and the road draping use the mesh, so
+  buildings, trees and roads sit on the drawn ground. Tiles without `mesh` keep the old
+  regular grid.
+- The rock shader takes its weight and lighting from the face normal (`dFdx`/`dFdy`), because
+  vertex normals on a TIN average a cliff with the flat ground above and below it.
+
+| Tile | Fine step | Vertices | Triangles | ground.bin | Size per km² |
+| --- | --- | --- | --- | --- | --- |
+| Plymouth (225 km²) | 4 m | 348,447 | 693,121 | 10.4 MB | 46 KB |
+| Tintagel (119 km²) | 5 m | 80,075 | 155,612 | 2.3 MB | 20 KB |
+
+At 0.5 m error, Plymouth was 24 MB. For the UK-wide bake, Plymouth's density works out at
+roughly 11 GB of meshes for Great Britain, before compression. Rural tiles will be smaller,
+but this matters for hosting (docs/hosting-architecture.md).
+
+### Stage 4: LIDAR mosaic
+
+- `fetch_dtm()` in `scripts/detail/fetch_external.py` fetches the Environment Agency LIDAR
+  Composite DTM (1 m) over WCS in 2 km chunks. It writes `<area>_dtm.tif` (int16
+  decimetres, EPSG:27700). It must run on Andy's laptop, because the cloud container can't
+  reach the gov hosts.
+- `lidar_heights()` averages the DTM onto the fine raster over the terrain tiles. It feathers
+  over 100 m only where the lidar stops on land. It also stops at the sea, and fading there
+  blurred every cliff top.
+- Coverage is 100% of both test tiles. Wales (DataMapWales) and Scotland (Scottish Public
+  Sector LiDAR on AWS) aren't wired in yet.
+
+### Stage 5: estuaries, tidal flats and saltmarsh
+
+- **Cover:** two new classes, `intertidal` (20) and `saltmarsh` (21). They come from Natural
+  England's Priority Habitats Inventory (Mudflats, Coastal saltmarsh) and OSM
+  `wetland=tidalflat/saltmarsh` (Overture `source_tags`). They are laid over sea, sand,
+  wetland, field and water cells. OSM `tidal_channel` water is drawn as flats too.
+- **Heights:** `tidal_heights()` squashes the lidar on the flats towards the waterline, at a
+  quarter of the relief, clipped to plus or minus 1 m. It keeps the flats at least 0.15 m off
+  0, where the sea plane would z-fight. Saltmarsh sits at least 0.4 m up.
+- **Look (mid tide):** matt, ripple-marked mud, with pools and creek beds where it dips below
+  the waterline. The pool edges are broken up with noise. Saltmarsh is green-brown sward.
+- **Sea:** the sea sees flats as land, so it lies transparent over them. Its detail texture
+  now carries an estuary shelter channel: 1 within 100 m of flats or saltmarsh, gone by
+  300 m. Shelter turns surf off (`seaHeights` in `src/detail/detailTerrain.ts`,
+  `oceanShader.ts`).
+
+Lessons from the GPU checks:
+
+- The mesh draws the flats as a few large, nearly level triangles. Anything glossy tied to
+  their normal (sun glint, sky reflection) lights a whole triangle at once and reads as
+  hard-edged white patches. So the mud has to stay matt.
+- The sea finds the coast from height over gradient. Every flats-to-channel step therefore
+  looked like a beach to it, and it drew foam along every bank until shelter stopped it.
+- Water mapped on a slope is a stream in a fold. Shaded as a lake, it drew a bright sliver,
+  then a black crack, across the grass. Water now stays water only where the ground is
+  within a few degrees of level, and is a damp, rushy strip elsewhere.
+
+Still open:
+
+- From 3 km up, the Tamar reads as a full river, with little mud showing. The channel there
+  really is wide, and the flats are thin strips along it.
+- Tintagel Island still reads as a green cone more than rock.
+- Sea depth colour shows ovals and bands offshore, from the coarse 1 km depth grid.
+- Kielder needs its DTM fetched and a rebuild.
+- Wales and Scotland lidar for the UK bake.
 
 ## Sources
 
@@ -271,3 +350,4 @@ faint straight seams inland at Tintagel, which are probably joins in the source 
 - [OS Terrain 50 technical specification](https://docs.os.uk/os-downloads/height-and-imagery/os-terrain-50/os-terrain-50-technical-specification)
 - [OS Terrain 5 overview](https://docs.os.uk/os-downloads/products/land-and-terrain-portfolio/os-terrain-5/os-terrain-5-overview)
 - [pydelatin](https://github.com/kylebarron/pydelatin) (greedy adaptive triangulation)
+- [Natural England Priority Habitats Inventory](https://www.data.gov.uk/dataset/priority-habitats-inventory-england) (mudflats, saltmarsh)
