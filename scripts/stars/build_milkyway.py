@@ -10,10 +10,18 @@ coordinates, linear half-float EXR, are used:
   catalogue (stars.bin), and for the light of the stars between our magnitude-8 limit and Tycho's, folded into the
   glow at a coarse scale.
 
-The maps' units are arbitrary, so the bright stars set the scale: the summed pixels round each one, against its V
-magnitude, give pixel value per unit of flux. The result is radiance relative to the sun's illuminance per steradian
-(the sky shader's units), stored log-encoded in an 8-bit JPEG (public/data/milkyway.jpg) with its range in
-public/data/milkyway.json.
+The maps' units are arbitrary. Two steps set them:
+
+1. Relative: the bright stars in the Hipparcos/Tycho layer, summed over their pixels (weighted by each pixel's solid
+   angle, since the maps hold radiance, not flux per pixel), against their V magnitudes. This lines the two layers
+   up with our catalogue, so the light of the magnitude 8 to 11.5 stars can be added without double counting.
+2. Absolute: the NASA maps' faint light comes out several times brighter than the real sky, so the total starlight
+   at the galactic poles (|b| > 75 degrees: our catalogue plus both layers) is scaled to the measured integrated
+   starlight there, 24.16 V mag/arcsec^2 (the mean of the north and south galactic poles, 24.24 and 24.08, from
+   Mattila et al., arXiv:1011.2941, table 1).
+
+The result is radiance relative to the sun's illuminance per steradian (the sky shader's units), stored log-encoded in
+an 8-bit JPEG (public/data/milkyway.jpg) with its range in public/data/milkyway.json.
 
 Usage: pip install -r scripts/requirements.txt && python3 scripts/stars/build_milkyway.py
 Run scripts/stars/build_stars.py first. The EXRs (70 MB) are cached in .cache/milkyway/.
@@ -42,6 +50,10 @@ LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float64)
 FLOOR = 1e-12
 # Coarse block size, in pixels, for the light of the magnitude 8 to 11.5 stars.
 BLOCK = 16
+# Integrated starlight at the galactic poles, V mag/arcsec^2 (Mattila et al. 2010, arXiv:1011.2941).
+POLE_STARLIGHT = 24.16
+ARCSEC2 = (math.pi / 180 / 3600) ** 2
+NGP = np.array([-0.8676, -0.1981, 0.4560])
 
 
 def fetch(name: str) -> pathlib.Path:
@@ -79,12 +91,18 @@ def pixel_of(ra: np.ndarray, dec: np.ndarray, width: int, height: int, sign: flo
     return (u * width).astype(int) % width, np.clip((v * height).astype(int), 0, height - 1)
 
 
+def row_omega(height: int, width: int) -> np.ndarray:
+    """Solid angle of a pixel in each row."""
+    row_dec = (0.5 - (np.arange(height) + 0.5) / height) * math.pi
+    return (2 * math.pi / width) * (math.pi / height) * np.cos(row_dec)
+
+
 def calibrate(hiptyc: np.ndarray, ra, dec, mag) -> tuple[float, float, dict]:
-    """Pixel value (luminance) per unit flux (V = 0), and which way right ascension runs."""
+    """Map value (luminance) times solid angle per unit flux (V = 0), and which way right ascension runs."""
     height, width, _ = hiptyc.shape
-    lum = hiptyc @ LUMA
-    # Bright, isolated-enough stars away from the poles: magnitudes 0.5 to 3.
-    pick = np.where((mag > 0.5) & (mag < 3.0) & (np.abs(dec) < math.radians(70)))[0]
+    lum = (hiptyc @ LUMA) * row_omega(height, width)[:, None]
+    # Bright, isolated-enough stars away from the poles: magnitudes 0.5 to 3.5.
+    pick = np.where((mag > 0.5) & (mag < 3.5) & (np.abs(dec) < math.radians(70)))[0]
     best = None
     for sign in (-1.0, 1.0):
         x, y = pixel_of(ra[pick], dec[pick], width, height, sign)
@@ -105,6 +123,12 @@ def calibrate(hiptyc: np.ndarray, ra, dec, mag) -> tuple[float, float, dict]:
         if best is None or spread < best[1]:
             best = (k, spread, sign, ks, dec[pick])
     k, spread, sign, ks, decs = best
+    # Is the map linear in flux? K should not change with magnitude.
+    mags = mag[pick]
+    for lo, hi in ((0.5, 1.5), (1.5, 2.5), (2.5, 3.5)):
+        sel = (mags >= lo) & (mags < hi)
+        if sel.any():
+            print(f"  K for magnitudes {lo} to {hi}: {np.median(ks[sel]):.4g} ({sel.sum()} stars)")
     if spread > 0.3:
         sys.exit(f"calibration failed: no orientation lines the map up with the catalogue (scatter {spread:.2f} dex)")
     # Does a star's summed light depend on declination? It should not, if each star is drawn with its whole flux.
@@ -123,31 +147,51 @@ def main() -> None:
     print("calibrating against the catalogue")
     k, sign, stats = calibrate(hiptyc, ra, dec, mag)
 
-    # Solid angle of each pixel row.
-    row_dec = (0.5 - (np.arange(height) + 0.5) / height) * math.pi
-    omega = (2 * math.pi / width) * (math.pi / height) * np.cos(row_dec)
+    omega = row_omega(height, width)
     to_sun = 10 ** (0.4 * SUN_V)  # flux of V = 0 relative to the sun's
-
-    radiance = milkyway / k * to_sun / omega[:, None, None]
+    radiance = milkyway / k * to_sun
 
     # The stars between our catalogue's limit (8) and Tycho's: the Tycho map's light less our catalogue's, block by
     # block, spread smoothly into the glow.
     bh, bw = height // BLOCK, width // BLOCK
-    blocks = hiptyc.reshape(bh, BLOCK, bw, BLOCK, 3).sum(axis=(1, 3))
+    flux = (hiptyc * omega[:, None, None]).reshape(bh, BLOCK, bw, BLOCK, 3).sum(axis=(1, 3))
     ours = np.zeros((bh, bw))
     x, y = pixel_of(ra, dec, width, height, sign)
     np.add.at(ours, (y // BLOCK, x // BLOCK), 10 ** (-0.4 * mag) * k)
-    block_lum = blocks @ LUMA
-    keep = np.clip(1.0 - ours / np.maximum(block_lum, 1e-30), 0.0, 1.0)
-    faint = blocks * keep[..., None]
+    flux_lum = flux @ LUMA
+    keep = np.clip(1.0 - ours / np.maximum(flux_lum, 1e-30), 0.0, 1.0)
     block_omega = omega.reshape(bh, BLOCK).sum(axis=1) * BLOCK
-    faint_radiance = faint / k * to_sun / block_omega[:, None, None]
+    faint_radiance = flux * keep[..., None] / k * to_sun / block_omega[:, None, None]
     up = np.stack(
         [np.asarray(Image.fromarray(faint_radiance[..., c].astype(np.float32)).resize((width, height), Image.BICUBIC)) for c in range(3)],
         axis=-1,
     )
-    radiance += np.maximum(up, 0.0)
+    up = np.maximum(up, 0.0)
+    radiance += up
     print(f"  stars 8 to 11.5 add {100 * (up @ LUMA).sum() / max((radiance @ LUMA).sum(), 1e-30):.1f}% of the glow")
+
+    # Absolute scale: all starlight round the galactic poles, ours included, against the measured value.
+    row_dec = (0.5 - (np.arange(height) + 0.5) / height) * math.pi
+    u = (np.arange(width) + 0.5) / width
+    col_ra = (u - 0.5) * 2 * math.pi / sign
+    vec = np.stack(
+        [np.cos(row_dec)[:, None] * np.cos(col_ra)[None, :], np.cos(row_dec)[:, None] * np.sin(col_ra)[None, :], np.repeat(np.sin(row_dec)[:, None], width, 1)],
+        axis=-1,
+    )
+    polar = np.abs(vec @ NGP) > math.sin(math.radians(75))
+    weights = np.broadcast_to(omega[:, None], (height, width))
+    polar_omega = weights[polar].sum()
+    glow = ((radiance @ LUMA) * weights)[polar].sum() / polar_omega
+    sv = np.stack([np.cos(dec) * np.cos(ra), np.cos(dec) * np.sin(ra), np.sin(dec)], axis=-1)
+    in_polar = np.abs(sv @ NGP) > math.sin(math.radians(75))
+    ours_polar = (10 ** (-0.4 * mag[in_polar])).sum() * to_sun / polar_omega
+    target = 10 ** (-0.4 * (POLE_STARLIGHT - SUN_V)) / ARCSEC2
+    scale = (target - ours_polar) / glow
+    print(f"  galactic poles: measured starlight {target:.3g}, ours {ours_polar:.3g}, maps {glow:.3g}: maps scaled by {scale:.3f}")
+    if not 0.01 < scale < 10:
+        sys.exit("absolute calibration out of range; check the maps")
+    radiance *= scale
+    stats["absoluteScale"] = scale
 
     lum = radiance @ LUMA
     top = float(np.percentile(lum, 99.995)) * 2
