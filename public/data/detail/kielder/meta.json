@@ -19,7 +19,8 @@
     "osm_levels": 25,
     "osm_height": 326,
     "ml": 452,
-    "lidar": 228
+    "lidar": 89,
+    "lidar_rejected": 139
   },
   "trees": 478,
   "hasCoast": true,
