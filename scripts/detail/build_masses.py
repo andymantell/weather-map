@@ -56,8 +56,11 @@ def main(area_name):
         row = rows[i]
         if not (osm[i] and row["height"] is not None and row["height"] > 1):
             measured = lidar.height(geoms[i])
-            if measured is not None:
+            estimate = building_height(row, geoms[i].area)
+            # As in build_area.py: small buildings measured far above the estimate are trees.
+            if measured is not None and not (geoms[i].area < 300 and measured > 2 * estimate):
                 return measured
+            return estimate
         return building_height(row, geoms[i].area)
 
     heights = np.array([height(i) for i in keep])

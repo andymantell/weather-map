@@ -428,7 +428,13 @@ def main(area_name):
         if not (x0 <= c.x <= x1 and y0 <= c.y <= y1):
             continue
         measured = None if from_osm and row["height"] is not None and row["height"] > 1 else lidar.height(g)
-        h = measured if measured is not None else building_height(row, g.area)
+        estimate = building_height(row, g.area)
+        # Garden trees over small houses, or footprints off the lidar by a metre or two, read as
+        # 15-25 m "houses": keep the estimate when a small building measures far above it.
+        if measured is not None and g.area < 300 and measured > 2 * estimate:
+            measured = None
+            stats["lidar_rejected"] = stats.get("lidar_rejected", 0) + 1
+        h = measured if measured is not None else estimate
         stats["lidar"] += measured is not None
         roof = 0
         ring = g.simplify(0.4)
