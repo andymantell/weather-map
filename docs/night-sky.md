@@ -68,22 +68,23 @@ flicker is seeded by its direction, so its grid point and its glare twinkle toge
 
 Per sky pixel at night: one cell-table read, a loop over that cell's stars (usually a handful, at most 23) with two
 texture reads each, and a loop over the 64 bright objects that skips anything further than four glare widths away.
-The night-sky block runs by day too, where the stars are far below the sky's brightness. GPU timings are not taken
-yet.
+The night-sky block runs by day too, where the stars are far below the sky's brightness.
+
+On Andy's laptop (Radeon RX 7700S, Chrome, 1600 × 900), a moonless view looking up from Plymouth Hoe with the clouds
+off runs at a median of 8.0 ms a frame (p90 8.3–15 ms over two runs of 120 frames). That is the whole frame; there
+is no switch to turn the stars off for comparison.
 
 ## Screenshots
 
 `scripts/stars/shots.mjs` turns the clouds off, tells the atmosphere the sky is clear, and takes five views from
 Plymouth Hoe: Saturn and the moon to the south, the Plough to the north, Orion rising, a 12° zoom on the Pleiades,
 and a moonless sky overhead on 10 November. Run it with `--gpu` on a real GPU. Images go to `docs/images/stars/`
-(not committed).
+(not committed). On the real GPU there were no shader errors.
 
 ## Not done yet
 
 - **A real Milky Way.** The band is still procedural. A real all-sky map (for example ESA's Gaia sky map, CC BY-SA
   3.0 IGO) would give the actual Cygnus rift and star clouds.
-- **Sun and moon refraction.** The sun and moon discs are not yet lifted by refraction (`atmosphere.ts` /
-  astronomy), so at the horizon they sit up to half a degree lower than the stars around them would suggest.
 - **Very wide views.** At 90° field of view, stars near the screen edge stretch slightly, because their size is set
   from the pixel's average angle.
 - **Planet discs.** Venus's crescent and Jupiter's moons need about 30× zoom, which the camera does not offer.
