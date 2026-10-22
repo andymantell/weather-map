@@ -107,7 +107,7 @@ def overture(theme, kind, bbox, columns, area):
         return pq.read_table(path)
     fs = pafs.S3FileSystem(
         anonymous=True, region="us-west-2",
-        proxy_options=os.environ.get("HTTPS_PROXY", ""),
+        proxy_options=os.environ.get("HTTPS_PROXY") or None,
         tls_ca_file_path=os.environ.get("SSL_CERT_FILE") or None,
     )
     dataset = ds.dataset(f"{OVERTURE}/theme={theme}/type={kind}/", filesystem=fs, format="parquet")
