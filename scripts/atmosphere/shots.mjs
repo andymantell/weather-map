@@ -46,6 +46,8 @@ await page.goto(base);
 await page.waitForFunction(() => window.atmosphere && window.rig, null, { timeout: 300000, polling: 500 });
 if (!base.includes('detail=off')) await page.waitForFunction(() => window.detail, null, { timeout: 120000, polling: 500 }).catch(() => {});
 await page.keyboard.press('h');
+// Let the sky irradiance read-back arrive before the first view snaps its exposure.
+await page.waitForTimeout(3000);
 const mapView = await page.evaluate(() => ({ p: window.camera.position.toArray(), t: window.rig.map.target.toArray() }));
 
 const timings = {};
@@ -67,6 +69,8 @@ for (const v of VIEWS) {
       }
       a.snapExposure();
       window.clouds?.invalidate?.();
+      // Snap again once the new sky's irradiance has been read back.
+      setTimeout(() => a.snapExposure(), 1200);
     },
     { v, mapView },
   );
