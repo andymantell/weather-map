@@ -21,37 +21,11 @@ being viewed and thickened or greyed by the UKV weather over the camera.
   thick cloud). The clouds now treat their 1% stopping transmittance as opaque for the same reason.
 - **Moon** drawn at twice its real size (Andy's call: at real size it is a few pixels across; its light is unchanged),
   with its phase lit from the sun's direction (Lommel-Seeliger reflectance, so the full moon looks flat as it does),
-  the near side from a surface map (`public/textures/moon.jpg`), earthshine on the dark limb, and the disc turned to
-  celestial north so its tilt changes through the night. It shows faintly by day. At night the disc is held just
-  under white instead of following the night exposure, which would clip it to a flat white disc; the eye sees the
-  moon's markings, so the phase and the maria read. Airglow and town glow are in front of it. The map is the
-  `moon_1024.jpg` shaded relief from the three.js examples (MIT repository; the map's own source is not stated there),
-  softened in contrast; NASA's public-domain LROC colour map from the CGI Moon Kit would be the better source, but its
-  host (svs.gsfc.nasa.gov) is not reachable from the build environment.
-- **Moonlight.** At night (sun below about -4°) the key light swaps to the moon: illuminance is the full moon's
-  2.5 millionths of sunlight, falling off with phase (Allen's magnitude law). It lights the clouds, casts the detailed
-  terrain's shadows and scatters in the air, so a moonlit sky is a faint blue.
-- **Stars, planets and Milky Way.** The real night sky: all 41,000 Hipparcos stars to magnitude 8 and the seven
-  planets, placed for the time and place and each carrying its physical illuminance, so they appear by themselves as
-  the sky darkens and the moon washes the faint ones out. See [night-sky.md](night-sky.md). A Milky Way band follows
-  the galactic equator, and a faint airglow plus town glow keeps a moonless night from going black.
-- **Aerial perspective.** A 32x32x32 froxel volume of in-scattering and transmittance (RGB) in camera space, rendered
-  every frame, applied to every scene pixel in the clouds' composite (after the cloud shadow, before the clouds are
-  blended) and to the clouds themselves at their mean depth. Distant hills turn blue, then into the horizon's colour;
-  at sunset the haze goes orange. Close to the ground it follows the planet's curve, so terrain at the horizon matches
-  the sky behind it; from high up it flattens to the map's flat ground.
-- **Haze from UKV visibility.** `pipeline/ukv_surface.py` bakes `visibility_at_screen_level` (plus fog fraction and
-  relative humidity) for the static hour; the live reader adds the 15-minute visibility files. The visibility over the
-  camera (a log mean over a few km) becomes a boundary-layer aerosol by Koschmieder's law (extinction = 3.912 / V).
-  Ordinary haze fills about 1 km and absorbs a little; under 1 km visibility it turns into a thin, white droplet fog
-  layer about 120 m deep. From high up the region's mean visibility is used instead of the spot's.
-- **Weather overhead.** The CPU reads the same cloud volume the clouds draw: cover within 5 km, the deck's base and
-  top, and how much of the sun or moon gets through along its path. Below the deck the air's direct light is cut by
-  that amount and replaced by the cloud base's grey light, so overcast haze is grey, not sunlit blue.
-- **Sky light on materials.** Every `MeshStandardMaterial` (terrain, towns, trees, roads) and the sea now get their
-  ambient and reflections from a prefiltered copy of this sky (`scene.environment`, PMREM), re-baked when the sun or
-  moon moves or the cloud cover changes. Under cloud the copy turns into the cloud base, so lighting goes flat and grey.
-  The hemisphere light is gone.
+  the surface from NASA's LROC albedo map (`public/textures/moon.jpg`, baked by
+  `scripts/atmosphere/build_moon_texture.py` from the CGI Moon Kit, public domain), earthshine on the dark limb, and
+  the disc turned to celestial north so its tilt changes through the night. It shows faintly by day. At night the
+  disc is held just under white instead of following the night exposure, which would clip it to a flat white disc;
+  the eye sees the moon's markings, so the phase and the maria read. Airglow and town glow are in front of it.
 - **Output dithering.** The final composite adds about one 8-bit step of triangular noise, so the smooth, dark
   gradient of a moonlit sky does not band into visible rings (it did, round the moon's glow).
 - **Exposure.** All light is physical and relative to sunlight, then multiplied by a pre-exposure that adapts like an
@@ -73,7 +47,7 @@ being viewed and thickened or greyed by the UKV weather over the camera.
 | `pipeline/ukv_surface.py` | Bakes visibility, fog fraction and humidity: `public/data/ukv-surface.{png,json}` |
 | `scripts/atmosphere/shots.mjs` | Screenshots and frame times at several times of day |
 | `scripts/atmosphere/moon.mjs` | Close-ups of the moon through a month (size, phase, markings) |
-| `public/textures/moon.jpg` | The moon's surface map (equirectangular, 1024x512) |
+| `scripts/atmosphere/build_moon_texture.py` | Bakes `public/textures/moon.jpg` (2048x1024) from NASA's LROC map |
 
 Hooks elsewhere: `src/weather/clouds.ts` takes the atmosphere's GLSL and uniforms (`options.atmosphere`) and exposes
 `lighting`; the composite in `cloudShaders.ts` applies aerial perspective and pre-exposure, and still composites when

@@ -618,8 +618,9 @@ float moonAlbedo(vec2 q) {
     float z = sqrt(max(1.0 - dot(q, q), 0.0));
     vec2 uv = vec2(0.5 + atan(q.x, z) / (2.0 * PI), 0.5 + asin(clamp(q.y, -1.0, 1.0)) / PI);
     float lum = dot(texture(uMoonMap, uv).rgb, vec3(0.2126, 0.7152, 0.0722));
-    // The map is a shaded relief with more contrast than the moon (maria 0.07, highlands 0.16): soften it a little.
-    return 0.12 * pow(lum / 0.27, 0.75);
+    // NASA's LROC albedo map, baked with a near-side mean of 0.4 (scripts/atmosphere/build_moon_texture.py); the
+    // moon's mean albedo is 0.12.
+    return 0.12 * lum / 0.4;
   }
   float m = 0.0;
   m += smoothstep(0.32, 0.12, length(q - vec2(-0.28, 0.42)));  // Imbrium

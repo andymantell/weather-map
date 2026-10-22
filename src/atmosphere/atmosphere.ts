@@ -323,7 +323,7 @@ export class Atmosphere {
         depthWrite: false,
       });
     this.skyMaterial = skyMaterial({});
-    // The moon's near side (a shaded relief map); a sketch of the maria stands in until it loads.
+    // The moon's surface (NASA's LROC albedo map); a sketch of the maria stands in until it loads.
     new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}textures/moon.jpg`, (map) => {
       map.colorSpace = THREE.SRGBColorSpace;
       map.anisotropy = 4;
