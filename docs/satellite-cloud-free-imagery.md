@@ -103,6 +103,28 @@ terrain build is owned by the "Terrain, towns and forests" work, so the change s
 there before `build_imagery.py` is edited, and the two committed test tiles (Plymouth, Kielder)
 rebuilt to check nothing else moves.
 
+## Done (2026-10-22)
+
+Andy agreed steps 1 to 4. `build_imagery.py` now does them, with a tile cloud limit of 60% (the
+per-area clear share does the real selection) and up to 20 recent plus 20 older scenes. Older
+scenes are only read when some pixel has fewer than 3 recent clear looks. Only the two test tiles
+were rebuilt, not the UK bake.
+
+| Tile | Tier 1 (recent) | Tier 2 (older years) | Tier 3 (loose SCL) | Tier 4 (inpaint) | Scenes | Time in the cloud container |
+| --- | --- | --- | --- | --- | --- | --- |
+| Plymouth | 99.94% | 0.06% | 0.0005% | 0% | 40 | 2.5 min |
+| Kielder | 100% (under 0.0001% elsewhere) | 0% | 0% | 0% | 40 | 1.7 min |
+
+Both images look almost the same as before: mean change 3 to 4 levels out of 255, and about 0.3%
+of pixels change by more than 25, mostly fields at a different crop stage. Neither old image had
+visible cloud, so the change is insurance for the north and the islands rather than a visible fix
+here. The new images are very slightly duller, probably because hazier days now take part in the
+median; the shader's colour grade can absorb that. The shares are in each tile's `meta.json`
+under `imagery`.
+
+The scripts' memory use went up with more scenes, so the median is now computed in strips of 256
+rows (a 25 km tile with 40 scenes ran out of 15 GB before that).
+
 ## Sources
 
 - [Sentinel-2 cloudless licence (EOX)](https://cloudless.eox.at/license-non-commercial)

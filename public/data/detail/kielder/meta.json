@@ -51,7 +51,11 @@
     "pixel": 10,
     "width": 2535,
     "height": 2558,
-    "scenes": 14
+    "scenes": 40,
+    "tier1": 1.0,
+    "tier2": 0.0,
+    "tier3": 0.0,
+    "tier4": 0.0
   },
   "boundaries": {
     "hedgeKm": 3.6,

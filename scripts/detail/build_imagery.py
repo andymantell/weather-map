@@ -4,9 +4,21 @@ Writes public/data/detail/<area>/imagery.jpg: true colour at 10 m on the area's 
 (north up, covering meta.json's xMin..xMax, yMin..yMax). The ground shader takes the real
 field pattern, crops and moorland colours from it, and adds its own detail close up.
 
-The image is a per-pixel median of the clear pixels in the summer scenes with least cloud,
-using each scene's scene classification (SCL) to drop cloud, cloud shadow and snow. Scenes
-come from the public Sentinel-2 L2A Cloud-Optimised GeoTIFFs on AWS (s3://sentinel-cogs),
+The image is a per-pixel median of clear summer looks. Each scene's scene classification (SCL)
+marks the clear pixels, with cloud, cirrus and cloud shadow grown by 100 m to catch soft edges
+the SCL misses. No cloudy pixel ever reaches the output: each pixel takes the first of these
+that has data (see docs/satellite-cloud-free-imagery.md):
+
+  1. recent summers (RECENT_YEARS) with at least MIN_LOOKS clear looks,
+  2. clear looks from any summer in OLDER_YEARS or RECENT_YEARS,
+  3. looser masking that also accepts SCL dark area and unclassified (topographic shadow,
+     bright rock), still never cloud, cirrus or cloud shadow,
+  4. a fill from the surrounding pixels.
+
+meta.json's "imagery" records the share of pixels from each tier, so tiles that lean on tiers 3
+and 4 can be checked by eye.
+
+Scenes come from the public Sentinel-2 L2A Cloud-Optimised GeoTIFFs on AWS (s3://sentinel-cogs),
 read anonymously, so no account is needed.
 
 Contains modified Copernicus Sentinel data.
@@ -18,6 +30,7 @@ import json
 import os
 import pathlib
 import sys
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -27,6 +40,7 @@ from PIL import Image
 from rasterio.enums import Resampling
 from rasterio.transform import from_origin
 from rasterio.vrt import WarpedVRT
+from scipy import ndimage
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE = ROOT / ".cache" / "detail" / "imagery"
@@ -34,12 +48,20 @@ BUCKET = "sentinel-cogs/sentinel-s2-l2a-cogs"
 
 # Sentinel-2 (MGRS) tile holding each area.
 TILES = {"plymouth": "30/U/VA", "kielder": "30/U/WG", "tintagel": "30/U/UB"}
-MONTHS = [(y, m) for y in (2023, 2024, 2025) for m in (5, 6, 7, 8, 9)]
-MAX_CLOUD = 40  # % of the tile
-MAX_SCENES = 14
+RECENT_YEARS = (2023, 2024, 2025)
+OLDER_YEARS = (2019, 2020, 2021, 2022)  # only read where recent looks run short
+SUMMER = (5, 6, 7, 8, 9)
+MAX_CLOUD = 60  # % of the tile; the per-area clear share below does the real selection
+MAX_SCENES = 20  # per year group
+MIN_SHARE = 0.3  # least share of the area a scene must see clear
+MIN_LOOKS = 3
 PIXEL = 10  # metres
-# SCL classes that are ground: vegetation, bare soil, water.
+GROW = 100  # metres to grow cloud, cirrus and cloud shadow by
+# SCL classes: ground (vegetation, bare soil, water), loose extras (dark area, unclassified),
+# and the ones never used (cloud shadow, cloud medium/high, cirrus).
 CLEAR = (4, 5, 6)
+LOOSE = (2, 7)
+CLOUDY = (3, 8, 9, 10)
 
 os.environ.setdefault("AWS_NO_SIGN_REQUEST", "YES")
 os.environ.setdefault("AWS_REGION", "us-west-2")
@@ -59,8 +81,11 @@ def s3():
     )
 
 
-def scenes(tile):
-    """Summer scenes of the tile with their cloud and no-data percentages."""
+def scenes(tile, years):
+    """Summer scenes of the tile, least cloudy first, one per date (latest processing)."""
+    cache = CACHE / f"scenes-{tile.replace('/', '')}-{years[0]}-{years[-1]}.json"
+    if cache.exists():
+        return [tuple(s) for s in json.loads(cache.read_text())]
     fs = s3()
 
     def month(ym):
@@ -77,8 +102,15 @@ def scenes(tile):
         return out
 
     with ThreadPoolExecutor(8) as ex:
-        found = [s for part in ex.map(month, MONTHS) for s in part]
-    return sorted(s for s in found if s[0] <= MAX_CLOUD and s[1] <= 60)
+        found = [s for part in ex.map(month, [(y, m) for y in years for m in SUMMER]) for s in part]
+    # S2A_30UVA_20250701_0_L2A and _1_L2A are the same pass processed twice.
+    latest = {}
+    for s in sorted(found, key=lambda s: s[2]):
+        latest[s[2].split("/")[-1].rsplit("_", 2)[0]] = s
+    keep = sorted(s for s in latest.values() if s[0] <= MAX_CLOUD and s[1] <= 60)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(keep))
+    return keep
 
 
 def read(path, band, meta, resampling):
@@ -93,48 +125,116 @@ def read(path, band, meta, resampling):
 
 
 def scene_pixels(path, meta):
-    cache = CACHE / (path.split("/")[-1] + f"-{meta['xMin']}.npz")
+    """True colour plus clear and loose masks for one scene."""
+    cache = CACHE / (path.split("/")[-1] + f"-{meta['xMin']}-{meta['yMax']}-scl.npz")
     if cache.exists():
         z = np.load(cache)
-        return z["rgb"], z["ok"]
-    rgb = read(path, "TCI", meta, Resampling.bilinear)
-    scl = read(path, "SCL", meta, Resampling.nearest)[0]
-    ok = np.isin(scl, CLEAR) & (rgb.min(axis=0) > 0)
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(cache, rgb=rgb, ok=ok)
-    return rgb, ok
+        rgb, scl = z["rgb"], z["scl"]
+    else:
+        rgb = read(path, "TCI", meta, Resampling.bilinear)
+        scl = read(path, "SCL", meta, Resampling.nearest)[0]
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(cache, rgb=rgb, scl=scl)
+    valid = rgb.min(axis=0) > 0
+    near_cloud = ndimage.distance_transform_edt(~np.isin(scl, CLOUDY)) * PIXEL <= GROW
+    clear = np.isin(scl, CLEAR) & valid & ~near_cloud
+    loose = np.isin(scl, CLEAR + LOOSE) & valid & ~near_cloud
+    return rgb, clear, loose
+
+
+def pick(found, meta, limit):
+    """Read scenes, least cloudy first, keeping up to `limit` that see enough of the area."""
+    kept = []
+    with ThreadPoolExecutor(6) as ex:
+        # Read in batches so we stop soon after enough scenes are found.
+        for i in range(0, len(found), 6):
+            batch = found[i:i + 6]
+            for (cloud, nodata, path), (rgb, clear, loose) in zip(
+                    batch, ex.map(lambda s: scene_pixels(s[2], meta), batch)):
+                share = clear.mean()
+                print(f"  {path.split('/')[-1]}: tile cloud {cloud:.0f}%, clear here {share:.0%}")
+                if share >= MIN_SHARE and len(kept) < limit:
+                    kept.append((rgb, clear, loose))
+            if len(kept) >= limit:
+                break
+    return kept
+
+
+def median(stack, masks):
+    """Per-pixel median of the masked looks (NaN where none) and the number of looks."""
+    height, width = masks[0].shape
+    out = np.empty((3, height, width), np.float32)
+    looks = np.zeros((height, width), np.int16)
+    # In strips of rows, so 40 scenes of a 25 km tile fit in memory.
+    for y0 in range(0, height, 256):
+        rows = slice(y0, y0 + 256)
+        rgb = np.stack([s[:, rows] for s in stack]).astype(np.float32)  # scene, band, y, x
+        ok = np.stack([m[rows] for m in masks])
+        rgb[~np.broadcast_to(ok[:, None], rgb.shape)] = np.nan
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN pixels
+            out[:, rows] = np.nanmedian(rgb, axis=0)
+        looks[rows] = ok.sum(axis=0)
+    return out, looks
+
+
+def inpaint(image):
+    """Fill NaN pixels from their surroundings with ever wider blurs."""
+    hole = np.isnan(image[0])
+    weight = (~hole).astype(np.float32)
+    data = np.nan_to_num(image)
+    for sigma in (2, 4, 8, 16, 32, 64, 128):
+        den = ndimage.gaussian_filter(weight, sigma)
+        need = np.isnan(image[0]) & (den > 0.05)
+        for c in range(3):
+            image[c][need] = (ndimage.gaussian_filter(data[c] * weight, sigma) / np.maximum(den, 1e-6))[need]
+        if not np.isnan(image[0]).any():
+            break
+    return image
 
 
 def main(area):
     out = ROOT / "public" / "data" / "detail" / area
     meta = json.loads((out / "meta.json").read_text())
-    found = scenes(TILES[area])
-    print(f"{len(found)} summer scenes under {MAX_CLOUD}% cloud")
-    stack, masks = [], []
-    for cloud, nodata, path in found:
-        rgb, ok = scene_pixels(path, meta)
-        share = ok.mean()
-        print(f"  {path.split('/')[-1]}: tile cloud {cloud:.0f}%, clear here {share:.0%}")
-        if share < 0.3:
-            continue
-        stack.append(rgb)
-        masks.append(ok)
-        if len(stack) >= MAX_SCENES:
-            break
-    rgb = np.stack(stack).astype(np.float32)  # scene, band, y, x
-    ok = np.stack(masks)[:, None]
-    rgb[~np.broadcast_to(ok, rgb.shape)] = np.nan
-    median = np.nanmedian(rgb, axis=0)
-    # Pixels never seen clear: fall back to the median of every scene.
-    fallback = np.median(np.stack(stack).astype(np.float32), axis=0)
-    median = np.where(np.isnan(median), fallback, median)
-    image = np.clip(median, 0, 255).astype(np.uint8).transpose(1, 2, 0)
+    tile = TILES[area]
+
+    recent = scenes(tile, RECENT_YEARS)
+    print(f"{len(recent)} recent summer scenes under {MAX_CLOUD}% cloud")
+    kept = pick(recent, meta, MAX_SCENES)
+    image, looks = median([k[0] for k in kept], [k[1] for k in kept])
+    tier = np.where(looks >= MIN_LOOKS, 1, 0)
+    used = len(kept)
+
+    if (tier == 0).any():
+        older = scenes(tile, OLDER_YEARS)
+        print(f"{(tier == 0).sum()} pixels short of looks; adding from {len(older)} older scenes")
+        kept += pick(older, meta, MAX_SCENES)
+        used = len(kept)
+        all_years, n = median([k[0] for k in kept], [k[1] for k in kept])
+        fill = (tier == 0) & (n > 0)
+        image[:, fill] = all_years[:, fill]
+        tier[fill] = 2
+
+    if (tier == 0).any():
+        loose, n = median([k[0] for k in kept], [k[2] for k in kept])
+        fill = (tier == 0) & (n > 0)
+        image[:, fill] = loose[:, fill]
+        tier[fill] = 3
+
+    if (tier == 0).any():
+        image[:, tier == 0] = np.nan
+        image = inpaint(image)
+        tier[tier == 0] = 4
+
+    shares = {f"tier{t}": round(float((tier == t).mean()), 6) for t in (1, 2, 3, 4)}
+    print("pixel shares:", shares)
+    image = np.clip(image, 0, 255).astype(np.uint8).transpose(1, 2, 0)
     Image.fromarray(image).save(out / "imagery.jpg", quality=90)
-    meta["imagery"] = dict(pixel=PIXEL, width=image.shape[1], height=image.shape[0], scenes=len(stack))
+    meta["imagery"] = dict(pixel=PIXEL, width=image.shape[1], height=image.shape[0], scenes=used, **shares)
     meta["attribution"] = meta["attribution"].split("; Contains modified Copernicus")[0] + \
         "; Contains modified Copernicus Sentinel data"
-    (out / "meta.json").write_text(json.dumps(meta, indent=2))
-    print(f"wrote imagery.jpg {image.shape[1]}x{image.shape[0]} from {len(stack)} scenes")
+    (out / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"wrote imagery.jpg {image.shape[1]}x{image.shape[0]} from {used} scenes")
 
 
 if __name__ == "__main__":
