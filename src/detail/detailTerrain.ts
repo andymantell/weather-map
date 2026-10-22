@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GroundSampler } from '../camera/groundSampler';
-import { type Area, detailUrl, heightAt, loadArea } from './area';
+import { type Area, coverAt, detailUrl, heightAt, loadArea } from './area';
 import {
   type Building,
   createFootprints,
@@ -103,6 +103,21 @@ function blendEdges(area: Area, coarse: GroundSampler, coarseScale: number) {
   // The mesh's edge vertices sit on grid samples, so it meets the skirt exactly.
   const p = area.tin?.positions;
   if (p) for (let k = 0; k < p.length; k += 3) p[k + 1] = blend(p[k], p[k + 2], p[k + 1]);
+}
+
+/** The tile's heights as the sea should see them: the shore only (see grounds). */
+function seaHeights(area: Area): Float32Array {
+  const { meta, heights } = area;
+  const flats = meta.classes.intertidal;
+  const out = new Float32Array(heights.length);
+  for (let j = 0; j < meta.height; j++) {
+    for (let i = 0; i < meta.width; i++) {
+      const k = j * meta.width + i;
+      const flat = flats !== undefined && coverAt(area, i * meta.spacing, j * meta.spacing) === flats;
+      out[k] = flat ? -2 : Math.max(heights[k], -2);
+    }
+  }
+  return out;
 }
 
 /** A curtain around the tile from its edge heights down by SKIRT metres. */
@@ -322,14 +337,16 @@ export async function createDetailTerrain(
   // The sea finds the coast from these heights (height over gradient) and shoals towards it,
   // so it gets the shore only: the sea bed below 2 m is a made-up shelf (build_area.py
   // sea_bed) whose slope it would read as coast and draw as rings of surf.
-  const grounds = tiles.map(({ area: { heights, meta } }) => ({
-    heights: heights.map((h) => Math.max(h, -2)),
-    width: meta.width,
-    height: meta.height,
-    x0: meta.xMin,
-    yMax: meta.yMax,
-    spacing: meta.spacing,
-    hasCoast: meta.hasCoast,
+  // Tidal flats count as open water too, or the sea would break surf over every mud bank;
+  // where they stand above the water they hide it anyway.
+  const grounds = tiles.map(({ area }) => ({
+    heights: seaHeights(area),
+    width: area.meta.width,
+    height: area.meta.height,
+    x0: area.meta.xMin,
+    yMax: area.meta.yMax,
+    spacing: area.meta.spacing,
+    hasCoast: area.meta.hasCoast,
   }));
   return { group, rects: tiles.map((t) => t.rect), grounds, terrainAt, setExaggeration, update };
 }

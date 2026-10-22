@@ -192,11 +192,11 @@ vec3 proceduralColour(vec2 p, int k, out float rough) {
     // Tidal mud and sand flats at mid tide: ripple-marked, glossy and wetter towards the
     // waterline, mirroring the sky (surfWater); the channels lie under the sea plane.
     float wet = 1.0 - smoothstep(0.05, 0.6, vHeight);
-    vec3 bed = mix(vec3(0.33, 0.30, 0.25), vec3(0.52, 0.47, 0.36), smoothstep(0.3, 0.7, fbm(p / 70.0)));
+    vec3 bed = mix(vec3(0.27, 0.24, 0.20), vec3(0.42, 0.38, 0.29), smoothstep(0.3, 0.7, fbm(p / 70.0)));
     float ripple = sin(dot(p, vec2(0.9, 0.4)) * 2.2 + fbm(p / 5.0) * 6.0);
     surfBump = (ripple * 0.015 + fbm(p / 2.0) * 0.05) * bumpFade;
     rough = mix(0.45, 0.15, wet);
-    surfWater = 0.25 + 0.5 * wet;
+    surfWater = 0.08 + 0.3 * wet;
     return bed * (0.85 + 0.25 * n) * mix(1.0, 0.6, wet);
   }
   if (k == 21) {
@@ -261,9 +261,22 @@ vec3 surfaceColour(vec2 p, out float rough) {
 const ROCK = /* glsl */ `
 varying vec3 vObjNormal;
 
-/** Share of rock from the true-scale slope: none below about 38 degrees, all above about 58. */
+/** Face normal (true scale, y up) from screen-space derivatives of the local position. */
+vec3 faceNormal() {
+  vec3 pos = vec3(vLocal.x, vHeight, vLocal.y);
+  vec3 n = normalize(cross(dFdx(pos), dFdy(pos)));
+  return n.y < 0.0 ? -n : n;
+}
+
+/**
+ * Share of rock from the true-scale slope: none below about 38 degrees, all above about 58.
+ * Taken from the steeper of the face and the smoothed vertex normal, since on the adaptive mesh
+ * a cliff can be a single strip of triangles whose vertex normals are averaged with the flat
+ * ground above and below it.
+ */
 float rockWeight(vec2 p) {
-  float w = 1.0 - smoothstep(0.53, 0.79, normalize(vObjNormal).y);
+  float up = min(normalize(vObjNormal).y, faceNormal().y);
+  float w = 1.0 - smoothstep(0.53, 0.79, up);
   // Ragged edges, so grass reaches down gullies and rock breaks out along the lip.
   return clamp(w * 1.5 - 0.25 + 0.6 * (fbm(p / 6.0) - 0.5), 0.0, 1.0);
 }
@@ -334,6 +347,12 @@ diffuseColor.rgb = pow(surf, vec3(2.2));
 `;
 
 const BUMP = /* glsl */ `
+// Rock faces light by their own face, not by normals averaged with the ground above and below.
+if (rockW > 0.0) {
+  vec3 face = normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)));
+  if (dot(face, normal) < 0.0) face = -face;
+  normal = normalize(mix(normal, face, 0.8 * rockW));
+}
 {
   vec3 pos = -vViewPosition;
   vec3 dpdx = dFdx(pos);

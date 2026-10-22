@@ -112,8 +112,10 @@ def tidal_features(area_name, bbox):
 
 def tidal_heights(raw):
     """Flats keep the lidar's channels and ripples but squashed towards the waterline (0 m),
-    so they read as wet mud and sand at mid tide with water left in the channels."""
-    return np.clip(0.15 + 0.3 * (raw - 0.15), -1.5, 1.0)
+    so they read as wet mud and sand at low-ish tide with water left in the channels. Nothing
+    is left within 0.15 m of the water, where the sea plane would flicker through."""
+    h = np.clip(0.12 + 0.25 * (raw + 0.8), -1.0, 1.0)
+    return np.where(h >= 0, np.maximum(h, 0.15), np.minimum(h, -0.15))
 
 
 UPLAND_SHRUB = 200  # temporary class while rasterising
