@@ -172,6 +172,18 @@ def sample_elevation(lon, lat, z=15):
             + mosaic[iy + 1, ix] * (1 - fx) * fy + mosaic[iy + 1, ix + 1] * fx * fy)
 
 
+def sea_bed(heights, d, spacing):
+    """Sea floor depths (m, negative) that shelve smoothly away from the coast.
+
+    The terrain tiles' bathymetry is blocky (hundreds of metres a step) with a flat -2 m strip
+    along the shore, which the sea's depth tint and surf show as stair steps and seams. Use the
+    deeper of a blurred version of it and a shelf falling to about 20 m within a kilometre.
+    """
+    blurred = gaussian_filter(np.clip(np.minimum(heights, -2.0), -200, -2), 400 / spacing, mode="nearest")
+    shelf = -(2 + 18 * (1 - np.exp(np.minimum(d, 0) / 300)))
+    return np.minimum(blurred, shelf)
+
+
 def cliffness(heights, d, spacing, cliff_lines, raster, grid_index):
     """0 on low shores, 1 on cliffs, from the backshore height and OSM cliff lines."""
     r = BACKSHORE_M / spacing
@@ -422,6 +434,7 @@ def main(area_name):
         sea = cover_arr == C["sea"]
         signed = (distance_transform_edt(~sea) - distance_transform_edt(sea)) * texel
         d = signed[gj, gi]
+        heights = np.where(d > 0, heights, sea_bed(heights, d, spacing))
         far = np.where(d > 0, np.maximum(heights, 0.5), np.minimum(heights, -2.0))
         t = np.clip((np.abs(d) - 20) / 20, 0, 1)
         shore = d * 0.08 * (1 - t) + far * t
