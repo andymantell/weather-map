@@ -507,7 +507,21 @@ vec3 twinkle(vec3 dir, float amount, float scint) {
   vec3 chroma = vec3(sin(t * 1.9 + 1.0), sin(t * 2.3 + 2.0), sin(t * 2.9 + 3.0));
   return max(vec3(1.0) + amount * scint * (vec3(w) + chroma * 0.6 * smoothstep(0.25, 0.6, scint)), 0.0);
 }
-vec3 stars(vec3 eq, float pixelAngle, float scint) {
+// The faintest star the dark-adapted eye can see against a sky of radiance B (relative to sunlight per steradian):
+// Schaefer's (1990) relation as usually quoted, NELM = 7.93 - 5 log10(10^(4.316 - b/5) + 1), b in mag/arcsec^2.
+// About 6.6 under a natural dark sky, 4 in a suburb, 3 under a full moon.
+float nakedEyeLimit(float B) {
+  float b = -26.74 - 2.5 * log(max(B, 1e-20) * 2.3504e-11) / log(10.0);
+  return 7.93 - 5.0 * log(pow(10.0, 4.316 - b / 5.0) + 1.0) / log(10.0);
+}
+// How much of a star of illuminance e (relative to the sun's) the eye sees at that limit: fading out over the last
+// magnitude, so the field thins as the sky brightens, as it does outdoors.
+float visibility(float e, float limit) {
+  float m = -2.5 * log(e) / log(10.0) - 26.74;
+  return 1.0 - smoothstep(limit - 1.0, limit + 0.3, m);
+}
+
+vec3 stars(vec3 eq, float pixelAngle, float scint, float limit) {
   if (uStarsReady < 0.5) return vec3(0.0);
   vec3 a = abs(eq);
   vec2 face;
@@ -531,8 +545,10 @@ vec3 stars(vec3 eq, float pixelAngle, float scint) {
     vec3 off = eq - star.xyz;
     float d2 = dot(off, off);
     if (d2 > 16.0 * sigma * sigma) continue;
+    float seen = visibility(star.w, limit);
+    if (seen <= 0.0) continue;
     vec3 colour = texelFetch(uStarColour, at, 0).rgb;
-    sum += colour * star.w * norm * exp(-0.5 * d2 / (sigma * sigma)) * twinkle(star.xyz, 1.0, scint);
+    sum += colour * star.w * seen * norm * exp(-0.5 * d2 / (sigma * sigma)) * twinkle(star.xyz, 1.0, scint);
   }
   // The planets and the brightest stars, drawn here rather than from the grid so that they can grow: a display
   // cannot show a point as bright as Sirius, so once a point would be past white its light spreads over a larger
@@ -549,7 +565,8 @@ vec3 stars(vec3 eq, float pixelAngle, float scint) {
     if (d2 > 16.0 * gs * gs) continue;
     float point = 0.94 * exp(-0.5 * d2 / (s * s)) / (2.0 * PI * s * s);
     float glare = 0.06 * exp(-0.5 * d2 / (gs * gs)) / (2.0 * PI * gs * gs);
-    sum += light.rgb * twinkle(dir.xyz, light.w, scint) * (point + glare);
+    float seen = visibility(dot(light.rgb, vec3(0.2126, 0.7152, 0.0722)), limit);
+    sum += light.rgb * seen * twinkle(dir.xyz, light.w, scint) * (point + glare);
   }
   return sum;
 }
@@ -641,10 +658,14 @@ void main() {
     // Scintillation grows with the air the light comes through: faint overhead, strong near the horizon.
     float airmass = 1.0 / max(d.y + 0.025, 0.03);
     float scint = clamp(0.08 * pow(airmass, 1.1), 0.0, 0.7);
-    vec3 night = stars(eq, pixelAngle, scint) * uSunIlluminance;
-    night += uSunIlluminance * (uMilkyWayReady > 0.5
-      ? milkyWayMap(eq, pixelAngle)
-      : 2.2e-9 * milkyWay(eq) * vec3(0.9, 0.93, 1.0));
+    vec3 mw = uMilkyWayReady > 0.5 ? milkyWayMap(eq, pixelAngle) : 2.2e-9 * milkyWay(eq) * vec3(0.9, 0.93, 1.0);
+    // The sky the eye sees the stars against (scattered sun and moon light, airglow and town glow, the Milky Way),
+    // and so the faintest star it can see here, less what the air takes on the way down.
+    vec3 lum3 = vec3(0.2126, 0.7152, 0.0722);
+    float background = dot((L + glow) / uSunIlluminance + mw * T, lum3);
+    float limit = nakedEyeLimit(background) + 2.5 * log(max(dot(T, lum3), 1e-6)) / log(10.0);
+    vec3 night = stars(eq, pixelAngle, scint, limit) * uSunIlluminance;
+    night += uSunIlluminance * mw;
     vec3 behind = night;
 
     // The moon, hiding what is behind it.

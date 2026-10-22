@@ -17,7 +17,7 @@ random stars, with no constellations and no planets.
 | Planets | JPL's *Approximate Positions of the Planets* (Standish), table 1 (1800–2050), corrected for light time | Within about 0.1° of astropy's built-in ephemeris (checked for Mercury to Neptune on 22 Oct 2026) |
 | Planet brightness | Mallama & Hilton (2018), *Computing Apparent Planetary Magnitudes for The Astronomical Almanac* | Mars's rotation and season terms and Uranus's latitude term left out (0.1 mag or less). Checked: Mars at the 2020 opposition comes out at −2.7 |
 | Planet colour | B-V from Wikipedia's [Color index](https://en.wikipedia.org/wiki/Color_index) table | |
-| Milky Way | Unchanged: a procedural band about the galactic equator (now precessed with the stars) | |
+| Milky Way | NASA/Goddard Space Flight Center Scientific Visualization Studio, [Deep Star Maps 2020](https://svs.gsfc.nasa.gov/4851) (Gaia DR2: ESA/Gaia/DPAC), Milky-Way-only layer | Brightness anchored to the measured starlight at the galactic poles (see below) |
 
 Positions were checked against astropy 8.0 for Plymouth Hoe at 22:00 UTC on 22 October 2026: Polaris, Vega,
 Betelgeuse, Sirius and Capella agree to 0.005°. Saturn (0.09°) has the largest planet error. The great conjunction of
@@ -64,6 +64,51 @@ sees colour only in bright stars, so saturation fades from 115% at magnitude −
 flickers on its own. Planets are discs rather than points, so they twinkle at 15% of a star's amount. Each star's
 flicker is seeded by its direction, so its grid point and its glare twinkle together.
 
+## The Milky Way
+
+`scripts/stars/build_milkyway.py` bakes `public/data/milkyway.jpg` (4096 × 2048, 3.5 MB) from two layers of NASA's
+Deep Star Maps 2020. Both are linear, half-float, plate carrée maps in J2000 equatorial coordinates. The cloud
+container can't reach svs.gsfc.nasa.gov, so the bake runs on Andy's machine.
+
+- `milkyway_2020_4k.exr` is the light of the 1.7 billion Gaia stars, with the Hipparcos and Tycho stars removed.
+  This is the glow itself.
+- `hiptyc_2020_4k.exr` holds the Hipparcos and Tycho stars alone (to about magnitude 11.5).
+
+**Lining up.** The script finds which way right ascension runs by checking that our catalogue's bright stars land on
+stars in the Hipparcos/Tycho layer: 0h is at the centre and RA increases to the left.
+
+**Relative brightness.** The maps hold radiance, so each star's pixels, weighted by solid angle and summed against
+its V magnitude, give the maps' scale. Before the solid-angle weighting, the scale depended on declination by a
+factor of 0.62. With it, the factor is 1.09. This scale is used to add the light of the magnitude 8 to 11.5 stars:
+the Tycho layer, less our own catalogue, block by block (1.4°), smoothed into the glow. They add about 5% of it.
+
+**Absolute brightness.** The maps' faint light, taken at that scale, came out about ten times brighter than the real
+sky. The scale also drifts with magnitude: it is 2.3 times higher for magnitude 3 stars than for magnitude 1, so NASA's
+rendering isn't linear in flux. Instead, the total starlight at the galactic poles (|b| > 75°: our catalogue plus
+both layers) is set to the measured integrated starlight there, 24.16 V mag/arcsec² (the mean of 24.24 and 24.08 for
+the north and south galactic poles; Mattila et al. 2010, arXiv:1011.2941, table 1). That scales the maps by 0.103.
+The result puts the brightest 0.1% of the sky (the Sagittarius and Scutum star clouds) at about 6.5e-9 of sunlight
+per steradian, around 20.4 mag/arcsec². That is close to the usually quoted brightness of the brightest Milky Way.
+The natural night sky in `atmosphere.ts` is 1.6e-9.
+
+**Encoding.** The radiance is log-encoded per channel over 2^-39.9 to 2^-17.1 (`milkyway.json`), so 8 bits give steps
+of about 6%. The shader picks the mip level itself from the pixel's angle, because derivatives jump where right
+ascension wraps. It keeps 45% of the map's colour, because the dark-adapted eye sees little colour in so faint a
+glow.
+
+## What the eye can see
+
+A screen shows every catalogued star unless something stops it, and 41,000 stars to magnitude 8 swamp the Milky Way.
+The sky shader now works out the faintest star the eye could see at each pixel. It takes the sky behind the pixel
+(scattered sun and moon light, airglow and town glow, the Milky Way) and applies Schaefer's (1990) relation as usually
+quoted: NELM = 7.93 − 5 log10(10^(4.316 − b/5) + 1), with b in mag/arcsec² (via
+[Unihedron's NELM calculator](https://unihedron.com/projects/darksky/NELM2BCalc.html)). It also allows for the
+starlight lost to the air. Stars fade out over the last magnitude above that limit.
+
+Against the app's natural sky (21.8 mag/arcsec²) the limit is about 6.5. A moonlit sky brings it down to about 3, and
+low on the horizon the extinction takes off more. The faint field thins out, the Milky Way reads as a band, and
+under the moon you're left with the constellations' main stars, as you would be outdoors.
+
 ## Cost
 
 Per sky pixel at night: one cell-table read, a loop over that cell's stars (usually a handful, at most 23) with two
@@ -78,13 +123,13 @@ is no switch to turn the stars off for comparison.
 
 `scripts/stars/shots.mjs` turns the clouds off, tells the atmosphere the sky is clear, and takes five views from
 Plymouth Hoe: Saturn and the moon to the south, the Plough to the north, Orion rising, a 12° zoom on the Pleiades,
-and a moonless sky overhead on 10 November. Run it with `--gpu` on a real GPU. Images go to `docs/images/stars/`
+a moonless sky overhead on 10 November, and the Milky Way through Cygnus (10 September) and Sagittarius (12 August). Run it with `--gpu` on a real GPU. Images go to `docs/images/stars/`
 (not committed). On the real GPU there were no shader errors.
 
 ## Not done yet
 
-- **A real Milky Way.** The band is still procedural. A real all-sky map (for example ESA's Gaia sky map, CC BY-SA
-  3.0 IGO) would give the actual Cygnus rift and star clouds.
+- **Milky Way brightness.** It is anchored to one measurement, at the galactic poles. If it looks too faint on a real
+  screen, a single gain on `milkyWayMap` would be a perceptual tweak rather than a physical one.
 - **Very wide views.** At 90° field of view, stars near the screen edge stretch slightly, because their size is set
   from the pixel's average angle.
 - **Planet discs.** Venus's crescent and Jupiter's moons need about 30× zoom, which the camera does not offer.
