@@ -229,13 +229,16 @@ def lidar_heights(area_name, tiles, x0, y1, step):
                   src_nodata=src.nodata / 10, dst_transform=from_origin(x0 - step / 2, y1 + step / 2, step, step),
                   dst_crs=PROJ, dst_nodata=np.nan, resampling=Resampling.average)
     valid = np.isfinite(dtm)
-    w = np.clip(distance_transform_edt(valid) * step / LIDAR_FEATHER_M, 0, 1)
+    # Feather only where the lidar stops on land; it also stops at the sea, and fading there
+    # would blur every cliff top back to the coarser tiles.
+    gap = ~valid & (tiles > 2)
+    w = np.clip(distance_transform_edt(~gap) * step / LIDAR_FEATHER_M, 0, 1) if gap.any() else np.ones(tiles.shape)
     print(f"lidar DTM covers {valid.mean():.1%} of the area")
     return np.where(valid, np.nan_to_num(dtm) * w + tiles * (1 - w), tiles)
 
 
 # Largest height error (m) the ground mesh may make against the fine raster.
-MESH_ERROR = 0.5
+MESH_ERROR = 1.0
 
 
 def write_mesh(heights, k, step, path, max_error=MESH_ERROR):
