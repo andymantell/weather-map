@@ -343,7 +343,15 @@ def write_mesh(heights, k, step, path, max_error=MESH_ERROR):
     rows, cols = heights.shape
     q = np.round(heights * 4) / 4
     tin = pydelatin.Delatin(q.astype(np.float32), width=cols, height=rows, max_error=max_error)
-    verts = np.round(tin.vertices[:, :2]).astype(np.int64).tolist()
+    v0 = np.round(tin.vertices[:, :2]).astype(np.int64)
+    # pydelatin 0.4 numbers rows from the bottom, older versions from the top: use whichever
+    # reproduces Delatin's own vertex heights, or the mesh is fitted to the terrain upside down.
+    flipped = v0.copy()
+    flipped[:, 1] = rows - 1 - flipped[:, 1]
+    z = tin.vertices[:, 2]
+    if np.abs(q[flipped[:, 1], flipped[:, 0]] - z).max() < np.abs(q[v0[:, 1], v0[:, 0]] - z).max():
+        v0 = flipped
+    verts = v0.tolist()
     index = {tuple(v): n for n, v in enumerate(verts)}
 
     def vertex(x, y):
