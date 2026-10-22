@@ -261,7 +261,7 @@ vec3 rockColour(vec3 pos, vec3 n, out float bump, out float rough) {
   float layer = pos.y + fbm(pos.xz / 60.0) * 6.0 + dot(pos.xz, vec2(0.012, 0.007));
   float band = fbm(vec2(layer / 1.6, 0.37));
   float ledge = smoothstep(0.35, 0.65, fract(layer / 2.3 + 0.3 * tri));
-  vec3 c = mix(vec3(0.47, 0.45, 0.42), vec3(0.52, 0.43, 0.33), smoothstep(0.3, 0.7, fbm(pos.xz / 150.0)));
+  vec3 c = mix(vec3(0.53, 0.52, 0.49), vec3(0.57, 0.49, 0.39), smoothstep(0.3, 0.7, fbm(pos.xz / 150.0)));
   c = mix(c, vec3(0.30, 0.29, 0.28), 0.55 * band);
   c *= 0.78 + 0.38 * tri + 0.14 * (fine - 0.5);
   // Joints: dark vertical cracks.

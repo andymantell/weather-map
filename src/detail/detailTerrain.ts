@@ -75,7 +75,7 @@ export interface DetailTerrain {
   group: THREE.Group;
   rects: THREE.Vector4[];
   /** Each tile's drawn ground heights (m, true scale) and grid, for the sea's surf. */
-  grounds: { heights: Float32Array; width: number; height: number; x0: number; yMax: number; spacing: number }[];
+  grounds: { heights: Float32Array; width: number; height: number; x0: number; yMax: number; spacing: number; hasCoast: boolean }[];
   /** Drawn ground height (km, exaggerated) inside a tile, or null outside every tile. */
   terrainAt(x: number, z: number): number | null;
   setExaggeration(value: number): void;
@@ -323,6 +323,7 @@ export async function createDetailTerrain(
     x0: meta.xMin,
     yMax: meta.yMax,
     spacing: meta.spacing,
+    hasCoast: meta.hasCoast,
   }));
   return { group, rects: tiles.map((t) => t.rect), grounds, terrainAt, setExaggeration, update };
 }

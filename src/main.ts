@@ -4,7 +4,7 @@ import { CameraRig, mountCameraControls } from './camera/cameraRig';
 import { loadHeightmap } from './heightmap';
 import { Projection } from './projection';
 import { createRainPlane, loadRainField } from './rain';
-import { createOcean, mountSeaControls } from './sea/ocean';
+import { createOcean, mountSeaControls, type Ocean } from './sea/ocean';
 import { createDetailTerrain, type DetailTerrain } from './detail/detailTerrain';
 import { createSea, createTerrain, setDetailRects } from './terrain';
 import { createCloudLayer, loadUkvClouds, mountCloudControls, type CloudLayer } from './weather/clouds';
@@ -67,6 +67,23 @@ let setExaggeration: ((value: number) => void) | undefined;
 /** The exaggeration in use, which can differ from the slider (see easeRelief). */
 let exaggeration = 1;
 let animatedRain: RainLayer | undefined;
+let ocean: Ocean | undefined;
+/** The detailed tiles feeding the sea's two depth slots, so they change only when needed. */
+let seaGroundKey = '';
+
+/** The sea has two depth slots for surf and shoaling: fill them with the coastal tiles nearest the camera. */
+function feedSeaGrounds(d: DetailTerrain, sea: Ocean, p: THREE.Vector3) {
+  const centre = (g: DetailTerrain['grounds'][number]) =>
+    Math.hypot((g.x0 + (g.width * g.spacing) / 2) / 1000 - p.x, -(g.yMax - (g.height * g.spacing) / 2) / 1000 - p.z);
+  const nearest = d.grounds
+    .filter((g) => g.hasCoast)
+    .sort((a, b) => centre(a) - centre(b))
+    .slice(0, 2);
+  const key = nearest.map((g) => `${g.x0},${g.yMax}`).join(';');
+  if (key === seaGroundKey) return;
+  seaGroundKey = key;
+  nearest.forEach((g, i) => sea.setDetailGround(i, g.heights, g.width, g.height, g.x0, g.yMax, g.spacing));
+}
 
 async function init() {
   // ?live reads the next hour of UKV straight from the Met Office bucket; ?live=2026-10-21T18:00Z picks the hour.
@@ -93,9 +110,10 @@ async function init() {
   mountCameraControls(document.getElementById('hud')!, rig, document.getElementById('camera-hint')!);
   const flatSea = createSea(heightmap);
   scene.add(flatSea);
-  const ocean = await createOcean(renderer, heightmap, sky, import.meta.env.BASE_URL);
-  scene.add(ocean.mesh);
-  mountSeaControls(document.getElementById('hud')!, ocean, flatSea);
+  const sea = await createOcean(renderer, heightmap, sky, import.meta.env.BASE_URL);
+  ocean = sea;
+  scene.add(sea.mesh);
+  mountSeaControls(document.getElementById('hud')!, sea, flatSea);
 
   const rain = createRainPlane(rainField, heightmap.meta);
   scene.add(rain);
@@ -148,7 +166,6 @@ async function init() {
       scene.add(d.group);
       setDetailRects(d.rects);
       rig!.sampler.detail = d.terrainAt;
-      d.grounds.slice(0, 2).forEach((g, i) => ocean.setDetailGround(i, g.heights, g.width, g.height, g.x0, g.yMax, g.spacing));
       if (import.meta.env.DEV) Object.assign(window, { detail: d });
     })
     .catch((error) => console.error('Detailed terrain failed to load', error));
@@ -191,6 +208,7 @@ renderer.setAnimationLoop((time) => {
     const aboveGround = Math.max(p.y - rig.sampler.heightAt(p.x, p.z), 0.001);
     easeRelief(aboveGround);
     detail?.update(camera, aboveGround);
+    if (detail && ocean) feedSeaGrounds(detail, ocean, p);
   }
   if (clouds) clouds.render();
   else renderer.render(scene, camera);

@@ -211,6 +211,7 @@ export async function createOcean(
       texture.magFilter = THREE.LinearFilter;
       texture.minFilter = THREE.LinearFilter;
       texture.needsUpdate = true;
+      (uniforms[`uDetailDepth${slot}`].value as THREE.Texture).dispose();
       uniforms[`uDetailDepth${slot}`].value = texture;
       (uniforms.uDetailGrid.value as THREE.Vector4[])[slot].set(x0, yMax, spacing, 1);
       (uniforms.uDetailSize.value as THREE.Vector2[])[slot].set(width, height);
