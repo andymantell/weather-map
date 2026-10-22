@@ -6,7 +6,7 @@ import { loadHeightmap } from './heightmap';
 import { Projection } from './projection';
 import { createRainPlane, loadRainField } from './rain';
 import { createOcean, mountSeaControls, type Ocean } from './sea/ocean';
-import { createDetailTerrain, type DetailTerrain } from './detail/detailTerrain';
+import { bakePreviewCentre, createDetailTerrain, type DetailTerrain } from './detail/detailTerrain';
 import { createSea, createTerrain, setDetailRects } from './terrain';
 import { createCloudLayer, loadUkvClouds, mountCloudControls, type CloudLayer } from './weather/clouds';
 import { createRainLayer, mountRainControls, type RainLayer } from './weather/rain/rain';
@@ -145,10 +145,16 @@ async function init() {
   });
   setExaggeration(Number(exaggerationInput.value));
 
-  // Start looking north over England and Wales.
+  // Start looking north over England and Wales, or (dev, ?tiles=) close over the UK bake tiles being previewed.
   const target = projection.toWorld(-2.5, 53.5);
-  rig.map.target.set(target.x, 0, target.z);
-  camera.position.set(target.x - 60, 420, target.z + 620);
+  const preview = bakePreviewCentre();
+  if (preview) {
+    rig.map.target.set(preview.x, 0, preview.z);
+    camera.position.set(preview.x - 4, 14, preview.z + 20);
+  } else {
+    rig.map.target.set(target.x, 0, target.z);
+    camera.position.set(target.x - 60, 420, target.z + 620);
+  }
   rig.map.update();
 
   loading.remove();

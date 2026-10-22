@@ -124,7 +124,7 @@ export function createTerrain(heightmap: Heightmap): THREE.Mesh {
 }
 
 /** Up to this many detailed tiles (src/detail/) can cut holes in the coarse terrain. */
-export const MAX_DETAIL_RECTS = 4;
+export const MAX_DETAIL_RECTS = 16;
 
 /** Shared by every terrain material; set via setDetailRects. */
 const terrainUniforms = {

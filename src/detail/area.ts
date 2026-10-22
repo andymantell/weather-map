@@ -137,9 +137,12 @@ export function tinHeight(tin: Tin, x: number, z: number): number | null {
   return null;
 }
 
-/** URL of one of an area's data files. */
+/** UK bake tile ids ("<i>_<j>" on the 16 km grid, scripts/detail/bake_uk.py); other names are test areas. */
+export const BAKE_TILE = /^(-?\d+)_(-?\d+)$/;
+
+/** URL of one of an area's data files. Baked UK tiles are served from /bake/ in dev (vite.config.ts). */
 export function detailUrl(baseUrl: string, name: string, file: string): string {
-  return `${baseUrl}data/detail/${name}/${file}`;
+  return BAKE_TILE.test(name) ? `${baseUrl}bake/${name}/${file}` : `${baseUrl}data/detail/${name}/${file}`;
 }
 
 async function pixels(url: string): Promise<Uint8ClampedArray> {

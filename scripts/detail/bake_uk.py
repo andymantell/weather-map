@@ -76,13 +76,26 @@ STEPS = [
     ("roads", "build_roads.py"),
 ]
 # Don't start another step while less memory than this is free.
-MIN_FREE_GB = 6
+MIN_FREE_GB = 3
+# Peak memory of each step (GB, measured over the first hundred tiles; build_area works on a fixed
+# 20 km raster, so even rural tiles take most of it). Steps start only while the peaks of those
+# running add up to no more than MEMORY_BUDGET_GB, since a step's memory grows for minutes
+# after it starts and free memory alone lets a burst of starts overshoot.
+PEAK_GB = {"external": 3.3, "area": 5.7, "masses": 2.5, "imagery": 2.0, "boundaries": 0.4, "roads": 0.4}
+MEMORY_BUDGET_GB = 86
+# .cache/bake/tuning.json, if present, overrides the budget while the bake runs,
+# e.g. {"memoryGb": 80}, so it can be tuned without a restart.
+TUNING = ba.BAKE / "tuning.json"
+
+
+def budget():
+    return read_json(TUNING, {}).get("memoryGb", MEMORY_BUDGET_GB)
 # Steps that peak at several GB (build_area reaches 5.5 GB on a town), and how many of them
 # may run at once, so 31 workers can't all be in one at the same moment.
 # External's lidar and habitat hosts throttle (403) when asked by many workers at once.
 # Imagery mostly waits on Sentinel-2 reads from us-west-2, so it runs in its own slots beside
 # the CPU ones, like the lidar.
-HEAVY = {"area": 20, "masses": 14, "external": 8, "imagery": 24}
+HEAVY = {"area": 31, "masses": 31, "external": 8, "imagery": 24}
 DOWNLOADS = ("external", "imagery")
 # Workers run single-threaded maths at below-normal priority, so the desktop stays responsive.
 WORKER_ENV = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", MKL_NUM_THREADS="1",
@@ -298,6 +311,8 @@ class Bake:
         # One slot per worker for the steps that use the CPU. England's lidar downloads wait
         # on the EA's servers, not the CPU, so they run beside these in their own slots.
         self.cpu = threading.Semaphore(workers)
+        self.memory = threading.Condition()
+        self.reserved = 0.0
 
     def done(self, tile_id):
         return (ba.BAKE / tile_id / "done.json").exists()
@@ -309,7 +324,8 @@ class Bake:
         elif name in DOWNLOADS:
             slots = [self.slots[name]]
         else:
-            slots = [self.cpu] + ([self.slots[name]] if name in self.slots else [])
+            # The step's own slot first: a tile queued for one mustn't sit on a CPU slot meanwhile.
+            slots = ([self.slots[name]] if name in self.slots else []) + [self.cpu]
         with self.lock:
             self.running[tile_id] = f"wait-{name}"
         taken = []
@@ -327,10 +343,22 @@ class Bake:
                 slot.release()
 
     def launch(self, tile_id, name, script, england, log):
-        while psutil.virtual_memory().available < MIN_FREE_GB * 1e9 and not self.stopping:
-            time.sleep(5)
-        if self.stopping:
-            raise KeyboardInterrupt
+        need = PEAK_GB.get(name, 1.0)
+        with self.memory:
+            while (self.reserved + need > budget()
+                   or psutil.virtual_memory().available < MIN_FREE_GB * 1e9):
+                if self.stopping:
+                    raise KeyboardInterrupt
+                self.memory.wait(timeout=5)
+            self.reserved += need
+        try:
+            return self.run_step(tile_id, name, script, england, log)
+        finally:
+            with self.memory:
+                self.reserved -= need
+                self.memory.notify_all()
+
+    def run_step(self, tile_id, name, script, england, log):
         args = [sys.executable, "-u", script, tile_id]
         if name == "external" and not england:
             args.append("--skip-lidar")
@@ -447,7 +475,8 @@ class Bake:
         mem = psutil.virtual_memory()
         line = (f"{complete}/{len(self.tiles)} tiles ({complete / len(self.tiles):.1%}) | "
                 f"{len(running)} running [{' '.join(f'{k}:{v}' for k, v in sorted(steps.items()))}] | "
-                f"{failed_now} failed this run | {eta} | RAM free {mem.available / 1e9:.0f} GB | "
+                f"{failed_now} failed this run | {eta} | RAM free {mem.available / 1e9:.0f} GB, "
+                f"budget {self.reserved:.0f}/{budget()} GB | "
                 f"up {fmt_duration(elapsed)}")
         write_json(ba.BAKE / "status.json", {"line": line, "complete": complete, "total": len(self.tiles),
                                              "running": running, "failedThisRun": failed_now, "at": time.time()})

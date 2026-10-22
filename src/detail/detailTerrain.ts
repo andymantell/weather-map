@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GroundSampler } from '../camera/groundSampler';
-import { type Area, coverAt, detailUrl, heightAt, loadArea } from './area';
+import { type Area, BAKE_TILE, coverAt, detailUrl, heightAt, loadArea } from './area';
 import {
   type Building,
   createFootprints,
@@ -26,8 +26,24 @@ import { createTrees, TREE_CHUNK } from './trees';
  * - trees: life-size near the camera and larger, sparser stand-ins further out.
  */
 
-/** Tiles baked so far by scripts/detail/build_area.py. */
-export const DETAIL_AREAS = ['plymouth', 'kielder', 'tintagel'];
+/**
+ * Tiles baked so far by scripts/detail/build_area.py. In dev, ?tiles=-8_-32,-7_-32 loads tiles
+ * of the UK bake (scripts/detail/bake_uk.py) instead, to preview them until tiles stream in.
+ */
+export const DETAIL_AREAS = (import.meta.env.DEV && new URLSearchParams(location.search).get('tiles')?.split(',')) || [
+  'plymouth',
+  'kielder',
+  'tintagel',
+];
+
+/** The middle (world km) of the UK bake tiles named by ?tiles=, for the camera to start over; null if none. */
+export function bakePreviewCentre(): { x: number; z: number } | null {
+  const ids = DETAIL_AREAS.map((n) => BAKE_TILE.exec(n)).filter((m) => m !== null);
+  if (!ids.length || !new URLSearchParams(location.search).has('tiles')) return null;
+  const mean = (k: number) => ids.reduce((s, m) => s + Number(m[k]) + 0.5, 0) / ids.length;
+  // Tiles are 16 km squares on the LAEA grid; the world has x east and z south, in km.
+  return { x: mean(1) * 16, z: -mean(2) * 16 };
+}
 
 /** Heights are blended into the coarse terrain over this distance from a tile's edge (m). */
 const EDGE_BLEND = 600;
@@ -86,11 +102,24 @@ export interface DetailTerrain {
   update(camera: THREE.Camera, heightAboveGround: number): void;
 }
 
-/** Pulls heights near the tile edge onto the coarse terrain so the two surfaces meet. */
-function blendEdges(area: Area, coarse: GroundSampler, coarseScale: number) {
+/**
+ * Pulls heights near the tile edge onto the coarse terrain so the two surfaces meet. Edges
+ * shared with another loaded UK bake tile are left alone: the tiles agree there already.
+ */
+function blendEdges(area: Area, name: string, coarse: GroundSampler, coarseScale: number) {
   const { meta, heights } = area;
+  const id = BAKE_TILE.exec(name);
+  const loaded = (di: number, dj: number) =>
+    id !== null && DETAIL_AREAS.includes(`${Number(id[1]) + di}_${Number(id[2]) + dj}`);
+  // Distance to each edge that meets coarse terrain (z runs south from yMax, so north is j + 1).
+  const [west, east, north, south] = [loaded(-1, 0), loaded(1, 0), loaded(0, 1), loaded(0, -1)];
   const blend = (x: number, z: number, h: number) => {
-    const edge = Math.min(x, z, area.sizeX - x, area.sizeZ - z);
+    const edge = Math.min(
+      west ? Infinity : x,
+      north ? Infinity : z,
+      east ? Infinity : area.sizeX - x,
+      south ? Infinity : area.sizeZ - z,
+    );
     if (edge >= EDGE_BLEND) return h;
     const worldX = (meta.xMin + x) / 1000;
     const worldZ = -(meta.yMax - z) / 1000;
@@ -195,7 +224,7 @@ async function createTile(baseUrl: string, name: string, coarse: GroundSampler, 
       fetch(detailUrl(baseUrl, name, `${f}.bin`)).then((r) => (r.ok ? r.arrayBuffer() : null)),
     ),
   );
-  blendEdges(area, coarse, coarseScale);
+  blendEdges(area, name, coarse, coarseScale);
 
   const { meta } = area;
   const group = new THREE.Group();
