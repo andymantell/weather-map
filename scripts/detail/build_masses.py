@@ -23,7 +23,7 @@ import numpy as np
 import shapely
 from shapely.strtree import STRtree
 
-from build_area import AREAS, ROOT, LidarHeights, building_height, overture, project
+from build_area import LidarHeights, area, building_height, overture, project
 
 # Closing radius (m) for each level of detail.
 LEVELS = (10, 18)
@@ -37,8 +37,8 @@ ROAD_CUT = {
 
 
 def main(area_name):
-    bbox = AREAS[area_name]["bbox"]
-    out = ROOT / "public" / "data" / "detail" / area_name
+    cfg = area(area_name)
+    bbox, out = cfg["bbox"], cfg["out"]
     meta = json.loads((out / "meta.json").read_text())
     x0, y1 = meta["xMin"], meta["yMax"]
     clip = shapely.box(meta["xMin"], meta["yMin"], meta["xMax"], meta["yMax"])

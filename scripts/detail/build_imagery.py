@@ -42,11 +42,13 @@ from rasterio.transform import from_origin
 from rasterio.vrt import WarpedVRT
 from scipy import ndimage
 
+import build_area as ba
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE = ROOT / ".cache" / "detail" / "imagery"
 BUCKET = "sentinel-cogs/sentinel-s2-l2a-cogs"
 
-# Sentinel-2 (MGRS) tile holding each area.
+# Sentinel-2 (MGRS) tile holding each area. UK bake tiles find theirs with mgrs_tiles().
 TILES = {"plymouth": "30/U/VA", "kielder": "30/U/WG", "tintagel": "30/U/UB"}
 RECENT_YEARS = (2023, 2024, 2025)
 OLDER_YEARS = (2019, 2020, 2021, 2022)  # only read where recent looks run short
@@ -71,6 +73,25 @@ if os.environ.get("HTTPS_PROXY"):
     os.environ.setdefault("GDAL_HTTP_PROXY", os.environ["HTTPS_PROXY"])
 if os.environ.get("SSL_CERT_FILE"):
     os.environ.setdefault("GDAL_CURL_CA_BUNDLE", os.environ["SSL_CERT_FILE"])
+
+
+def mgrs_tiles(square):
+    """Every Sentinel-2 tile ("30/U/VA") over a LAEA square, from a 5 x 5 grid of points on it.
+    A 16 km bake tile can straddle two to four of them, or a UTM zone boundary."""
+    import mgrs
+
+    x0, y0, x1, y1 = square
+    t = np.linspace(0, 1, 5)
+    gx, gy = np.meshgrid(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t)
+    lon, lat = ba.to_lonlat.transform(gx.ravel(), gy.ravel())
+    m = mgrs.MGRS()
+    ids = {m.toMGRS(la, lo, MGRSPrecision=0) for lo, la in zip(lon, lat)}
+    return sorted(f"{i[:-3]}/{i[-3]}/{i[-2:]}" for i in ids)
+
+
+def area_tiles(area):
+    cfg = ba.area(area)
+    return mgrs_tiles(cfg["square"]) if "square" in cfg else [TILES[area]]
 
 
 def s3():
@@ -109,7 +130,7 @@ def scenes(tile, years):
         latest[s[2].split("/")[-1].rsplit("_", 2)[0]] = s
     keep = sorted(s for s in latest.values() if s[0] <= MAX_CLOUD and s[1] <= 60)
     cache.parent.mkdir(parents=True, exist_ok=True)
-    cache.write_text(json.dumps(keep))
+    ba.write_atomic(cache, lambda p: p.write_text(json.dumps(keep)))
     return keep
 
 
@@ -134,7 +155,10 @@ def scene_pixels(path, meta):
         rgb = read(path, "TCI", meta, Resampling.bilinear)
         scl = read(path, "SCL", meta, Resampling.nearest)[0]
         cache.parent.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(cache, rgb=rgb, scl=scl)
+        # np.savez adds ".npz" to names without it, so the temporary name keeps the suffix.
+        tmp = cache.with_name(f"{cache.stem}.{os.getpid()}.tmp.npz")
+        np.savez_compressed(tmp, rgb=rgb, scl=scl)
+        os.replace(tmp, cache)
     valid = rgb.min(axis=0) > 0
     near_cloud = ndimage.distance_transform_edt(~np.isin(scl, CLOUDY)) * PIXEL <= GROW
     clear = np.isin(scl, CLEAR) & valid & ~near_cloud
@@ -194,11 +218,15 @@ def inpaint(image):
 
 
 def main(area):
-    out = ROOT / "public" / "data" / "detail" / area
+    out = ba.area(area)["out"]
     meta = json.loads((out / "meta.json").read_text())
-    tile = TILES[area]
+    tiles = area_tiles(area)
 
-    recent = scenes(tile, RECENT_YEARS)
+    def listed(years):
+        # Pooled over the Sentinel-2 tiles, least cloudy first.
+        return sorted(s for tile in tiles for s in scenes(tile, years))
+
+    recent = listed(RECENT_YEARS)
     print(f"{len(recent)} recent summer scenes under {MAX_CLOUD}% cloud")
     kept = pick(recent, meta, MAX_SCENES)
     image, looks = median([k[0] for k in kept], [k[1] for k in kept])
@@ -206,7 +234,7 @@ def main(area):
     used = len(kept)
 
     if (tier == 0).any():
-        older = scenes(tile, OLDER_YEARS)
+        older = listed(OLDER_YEARS)
         print(f"{(tier == 0).sum()} pixels short of looks; adding from {len(older)} older scenes")
         kept += pick(older, meta, MAX_SCENES)
         used = len(kept)

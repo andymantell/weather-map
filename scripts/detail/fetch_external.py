@@ -19,6 +19,8 @@ Usage: python scripts/detail/fetch_external.py plymouth [--skip-lidar]
 """
 
 import json
+import os
+import pathlib
 import re
 import sys
 import time
@@ -48,7 +50,12 @@ PHI_TYPE = "dataset-92b43165-0dd0-4e69-a712-1e49bb5aa0d0:Priority_Habitat_Invent
 CHUNK = 2000  # metres per WCS request
 
 
-def get(url, params=None, tries=4):
+# The data.gov.uk hosts answer 403 or 429 for a while when asked too fast (the UK bake runs
+# many areas at once), so back off for minutes, not seconds, before trying again.
+THROTTLED = (403, 429, 502, 503, 504)
+
+
+def get(url, params=None, tries=8):
     if params:
         url = f"{url}?{urllib.parse.urlencode(params, safe=':,()')}"
     for attempt in range(tries):
@@ -56,10 +63,13 @@ def get(url, params=None, tries=4):
             with urllib.request.urlopen(url, timeout=120) as r:
                 return r.read()
         except Exception as error:  # noqa: BLE001 - retry any network failure
+            code = getattr(error, "code", 0)
             # A 4xx/5xx from the WCS outside its coverage won't change on retry.
-            if attempt == tries - 1 or getattr(error, "code", 0) in (400, 404, 500):
+            if attempt == tries - 1 or code in (400, 404, 500):
                 raise RuntimeError(f"{url}: {error}") from error
-            time.sleep(2 ** (attempt + 1))
+            wait = min(30 * 2 ** attempt, 300) if code in THROTTLED else 2 ** (attempt + 1)
+            print(f"  {code or type(error).__name__} from {url.split('?')[0][-60:]}, retrying in {wait} s")
+            time.sleep(wait)
 
 
 def bng_bbox(bbox):
@@ -71,6 +81,17 @@ def bng_bbox(bbox):
 
 
 def coverage_id(wcs):
+    """The elevation coverage of a WCS, looked up once and kept with the lidar cache."""
+    path = LIDAR_CACHE / "coverages.json"
+    known = json.loads(path.read_text()) if path.exists() else {}
+    if wcs not in known:
+        known[wcs] = find_coverage(wcs)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        ba.write_atomic(path, lambda p: p.write_text(json.dumps(known, indent=1)))
+    return known[wcs]
+
+
+def find_coverage(wcs):
     caps = get(wcs, {"service": "WCS", "version": "2.0.1", "request": "GetCapabilities"}).decode()
     ids = re.findall(r"<wcs:CoverageId>([^<]+)</wcs:CoverageId>", caps)
     return next(i for i in ids if "Elevation" in i)
@@ -80,83 +101,123 @@ def wcs_chunk(wcs, cov, x0, y0, x1, y1):
     # The query repeats "subset", which urlencode can't do, so it's built by hand.
     query = (f"service=WCS&version=2.0.1&request=GetCoverage&coverageId={urllib.parse.quote(cov)}"
              f"&format=image/tiff&subset=E({x0},{x1})&subset=N({y0},{y1})")
-    data = get(f"{wcs}?{query}")
-    with MemoryFile(data) as mem, mem.open() as src:
-        a = src.read(1).astype(np.float32)
-        nodata = src.nodata
-        if nodata is not None:
-            a[a == nodata] = np.nan
-        a[a < -1000] = np.nan
-        return a
+    for attempt in range(4):
+        data = get(f"{wcs}?{query}")
+        try:
+            with MemoryFile(data) as mem, mem.open() as src:
+                a = src.read(1).astype(np.float32)
+                nodata = src.nodata
+            break
+        except rasterio.errors.RasterioError:
+            # The odd response arrives cut short; fetch it again.
+            if attempt == 3:
+                raise
+            print(f"  bad TIFF for E({x0}) N({y0}), fetching again")
+            time.sleep(5)
+    if nodata is not None:
+        a[a == nodata] = np.nan
+    a[a < -1000] = np.nan
+    return a
+
+
+def write_tif(out, data, x0, y1, nodata):
+    def write(path):
+        with rasterio.open(path, "w", driver="GTiff", width=data.shape[1], height=data.shape[0], count=1,
+                           dtype="int16", crs="EPSG:27700", transform=from_origin(x0, y1, 1, 1), nodata=nodata,
+                           compress="deflate", predictor=2, tiled=True) as dst:
+            dst.write(data, 1)
+    OUT.mkdir(parents=True, exist_ok=True)
+    ba.write_atomic(out, write)
+
+
+# Lidar chunks are cached on the 2 km BNG grid and shared between areas, so the margins that
+# neighbouring UK bake tiles overlap by are downloaded once. About 10 MB a chunk, so England
+# needs a few hundred GB: kept on E: when there is one.
+LIDAR_CACHE = pathlib.Path(os.environ.get("LIDAR_CACHE") or
+                           ("E:/weather-map-cache/lidar" if os.path.isdir("E:/") else ba.CACHE / "lidar"))
+
+
+def lidar_chunk(cx, cy, covs):
+    """DTM and nDSM (int16 decimetres, CHUNK square, rows north to south) of the chunk whose
+    south-west corner is cx, cy, or None where the service has no data (outside England)."""
+    path = LIDAR_CACHE / f"{cx}_{cy}.npz"
+    if path.exists():
+        z = np.load(path)
+        return (z["dtm"], z["ndsm"]) if "dtm" in z else None
+    ex, ey = cx + CHUNK, cy + CHUNK
+    dtm = np.full((CHUNK, CHUNK), -32768, np.int16)
+    ndsm = np.full((CHUNK, CHUNK), -1, np.int16)
+    try:
+        t = wcs_chunk(DTM_WCS, covs[0], cx, cy, ex, ey)
+    except RuntimeError as error:
+        # Outside England (e.g. Kielder's Scottish edge), or open sea: the service answers
+        # with an error that won't change, so remember the gap. Anything else is retried.
+        if getattr(error.__cause__, "code", 0) not in (400, 404, 500):
+            raise
+        print(f"  lidar chunk {cx},{cy} has no data: {str(error)[-80:]}")
+        save_chunk(path, {})
+        return None
+    hh, ww = min(t.shape[0], CHUNK), min(t.shape[1], CHUNK)
+    t = t[:hh, :ww]
+    dtm[:hh, :ww] = np.where(np.isnan(t), -32768, np.clip(np.round(t * 10), -32000, 32000)).astype(np.int16)
+    try:
+        dsm = wcs_chunk(DSM_WCS, covs[1], cx, cy, ex, ey)
+    except RuntimeError as error:
+        # Some coastal chunks have a DTM but no DSM: keep the ground, and building
+        # heights there fall back to estimates.
+        if getattr(error.__cause__, "code", 0) not in (400, 404, 500):
+            raise
+        print(f"  dsm chunk {cx},{cy} has no data: {str(error)[-80:]}")
+        dsm = None
+    if dsm is not None:
+        hh, ww = min(dsm.shape[0], hh), min(dsm.shape[1], ww)
+        d = np.clip((dsm[:hh, :ww] - t[:hh, :ww]) * 10, -1, 32000)
+        ndsm[:hh, :ww] = np.where(np.isnan(d), -1, d).astype(np.int16)
+    save_chunk(path, {"dtm": dtm, "ndsm": ndsm})
+    return dtm, ndsm
+
+
+def save_chunk(path, arrays):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # np.savez adds ".npz" to names without it, so the temporary name keeps the suffix.
+    tmp = path.with_name(f"{path.stem}.{os.getpid()}.tmp.npz")
+    np.savez_compressed(tmp, **arrays)
+    try:
+        os.replace(tmp, path)
+    except PermissionError:
+        tmp.unlink(missing_ok=True)  # another worker wrote the same chunk first
 
 
 def fetch_lidar(area, bbox):
-    out = OUT / f"{area}_ndsm.tif"
-    if out.exists():
-        print("have", out)
+    """Both lidar rasters (nDSM and DTM) for the area, from the shared chunk cache."""
+    ndsm_out, dtm_out = OUT / f"{area}_ndsm.tif", OUT / f"{area}_dtm.tif"
+    if ndsm_out.exists() and dtm_out.exists():
+        print("have", ndsm_out, dtm_out)
         return
     x0, y0, x1, y1 = bng_bbox(bbox)
-    dsm_cov, dtm_cov = coverage_id(DSM_WCS), coverage_id(DTM_WCS)
+    # Snapped out to the chunk grid, so every area asks for the same chunks.
+    x0, y0 = x0 // CHUNK * CHUNK, y0 // CHUNK * CHUNK
+    x1, y1 = -(-x1 // CHUNK) * CHUNK, -(-y1 // CHUNK) * CHUNK
+    covs = []
     w, h = x1 - x0, y1 - y0
     ndsm = np.full((h, w), -1, np.int16)
-    missing = 0
-    for cy in range(y0, y1, CHUNK):
-        for cx in range(x0, x1, CHUNK):
-            ex, ey = min(cx + CHUNK, x1), min(cy + CHUNK, y1)
-            try:
-                dsm = wcs_chunk(DSM_WCS, dsm_cov, cx, cy, ex, ey)
-                dtm = wcs_chunk(DTM_WCS, dtm_cov, cx, cy, ex, ey)
-            except RuntimeError as error:
-                # The service errors outside England (e.g. Kielder's Scottish edge): leave nodata.
-                print(f"  lidar chunk {cx},{cy} skipped: {str(error)[-80:]}")
-                missing += 1
-                continue
-            hh, ww = min(dsm.shape[0], dtm.shape[0], ey - cy), min(dsm.shape[1], dtm.shape[1], ex - cx)
-            d = np.clip((dsm[:hh, :ww] - dtm[:hh, :ww]) * 10, -1, 32000)
-            d = np.where(np.isnan(d), -1, d).astype(np.int16)
-            # Rows run north to south.
-            r0 = y1 - ey
-            ndsm[r0:r0 + hh, cx - x0:cx - x0 + ww] = d
-            print(f"  lidar chunk {cx},{cy}")
-    OUT.mkdir(parents=True, exist_ok=True)
-    with rasterio.open(out, "w", driver="GTiff", width=w, height=h, count=1, dtype="int16",
-                       crs="EPSG:27700", transform=from_origin(x0, y1, 1, 1), nodata=-1,
-                       compress="deflate", predictor=2, tiled=True) as dst:
-        dst.write(ndsm, 1)
-    print("wrote", out, f"({missing} chunks without data)")
-
-
-def fetch_dtm(area, bbox):
-    out = OUT / f"{area}_dtm.tif"
-    if out.exists():
-        print("have", out)
-        return
-    x0, y0, x1, y1 = bng_bbox(bbox)
-    cov = coverage_id(DTM_WCS)
-    w, h = x1 - x0, y1 - y0
     dtm = np.full((h, w), -32768, np.int16)
-    missing = 0
+    missing = cached = 0
     for cy in range(y0, y1, CHUNK):
         for cx in range(x0, x1, CHUNK):
-            ex, ey = min(cx + CHUNK, x1), min(cy + CHUNK, y1)
-            try:
-                a = wcs_chunk(DTM_WCS, cov, cx, cy, ex, ey)
-            except RuntimeError as error:
-                # Outside England, or open sea: leave nodata and let the build fall back.
-                print(f"  dtm chunk {cx},{cy} skipped: {str(error)[-80:]}")
+            if not covs and not (LIDAR_CACHE / f"{cx}_{cy}.npz").exists():
+                covs = [coverage_id(DTM_WCS), coverage_id(DSM_WCS)]
+            cached += (LIDAR_CACHE / f"{cx}_{cy}.npz").exists()
+            got = lidar_chunk(cx, cy, covs)
+            if got is None:
                 missing += 1
                 continue
-            hh, ww = min(a.shape[0], ey - cy), min(a.shape[1], ex - cx)
-            d = np.where(np.isnan(a[:hh, :ww]), -32768, np.clip(np.round(a[:hh, :ww] * 10), -32000, 32000))
-            r0 = y1 - ey
-            dtm[r0:r0 + hh, cx - x0:cx - x0 + ww] = d.astype(np.int16)
-            print(f"  dtm chunk {cx},{cy}")
-    OUT.mkdir(parents=True, exist_ok=True)
-    with rasterio.open(out, "w", driver="GTiff", width=w, height=h, count=1, dtype="int16",
-                       crs="EPSG:27700", transform=from_origin(x0, y1, 1, 1), nodata=-32768,
-                       compress="deflate", predictor=2, tiled=True) as dst:
-        dst.write(dtm, 1)
-    print("wrote", out, f"({missing} chunks without data)")
+            r0, c0 = y1 - cy - CHUNK, cx - x0  # rows run north to south
+            dtm[r0:r0 + CHUNK, c0:c0 + CHUNK], ndsm[r0:r0 + CHUNK, c0:c0 + CHUNK] = got
+    write_tif(dtm_out, dtm, x0, y1, -32768)
+    write_tif(ndsm_out, ndsm, x0, y1, -1)
+    n = (w // CHUNK) * (h // CHUNK)
+    print("wrote", ndsm_out, dtm_out, f"({n} chunks: {cached} cached, {missing} without data)")
 
 
 def fetch_features(url, bbox, out):
@@ -178,7 +239,7 @@ def fetch_features(url, bbox, out):
             break
         offset += len(got)
     OUT.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    ba.write_atomic(out, lambda p: p.write_text(json.dumps({"type": "FeatureCollection", "features": features})))
     print("wrote", out)
 
 
@@ -197,17 +258,17 @@ def fetch_wfs(url, type_name, bbox, out):
     for f in features:
         f.pop("id", None)
     OUT.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"type": "FeatureCollection", "features": features}))
+    ba.write_atomic(out, lambda p: p.write_text(json.dumps({"type": "FeatureCollection", "features": features})))
     print(f"wrote {out} ({len(features)} features)")
 
 
 def main(area, skip_lidar=False):
-    bbox = ba.AREAS[area]["bbox"]
+    bbox = ba.area(area)["bbox"]
     if not skip_lidar:
         fetch_lidar(area, bbox)
-        fetch_dtm(area, bbox)
     fetch_features(NFI_URL, bbox, OUT / f"{area}_nfi.geojson")
-    fetch_wfs(PHI_WFS, PHI_TYPE, bbox, OUT / f"{area}_phi.geojson")
+    if not skip_lidar:  # the habitat inventory is England-only too, like the lidar
+        fetch_wfs(PHI_WFS, PHI_TYPE, bbox, OUT / f"{area}_phi.geojson")
 
 
 if __name__ == "__main__":

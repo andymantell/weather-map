@@ -130,9 +130,83 @@ CLIFF_LOW_M, CLIFF_HIGH_M = 4.0, 12.0
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CACHE = ROOT / ".cache" / "detail"
 EXTERNAL = CACHE / "external"
+# UK-wide Overture extracts written by bake_uk.py, read instead of S3 when present.
+UK = CACHE / "uk"
+# Grid tiles of the UK bake (bake_uk.py) are written here, outside git.
+BAKE = ROOT / ".cache" / "bake"
+
+# The UK bake's tiles: TILE_M squares on the LAEA grid, ids "<i>_<j>" from the grid index,
+# so neighbours share edges exactly. Heights and cover are worked out over the square grown
+# by MARGIN_M, so the coast, sea-bed blur and cover classes run on across the seams, then
+# cropped back to it.
+TILE_M = 16000
+TILE = dict(spacing=20, texel=4, fine=4)
+MARGIN_M = 2000  # beyond the sea-bed blur (4 sigma = 1.6 km)
 
 to_lonlat = Transformer.from_crs(PROJ, "EPSG:4326", always_xy=True)
 from_lonlat = Transformer.from_crs("EPSG:4326", PROJ, always_xy=True)
+
+
+def tile_square(name):
+    """The LAEA square (x0, y0, x1, y1) of a grid tile id, or None for a named area."""
+    parts = name.split("_")
+    if len(parts) != 2 or not all(p.lstrip("-").isdigit() for p in parts):
+        return None
+    i, j = int(parts[0]), int(parts[1])
+    return (i * TILE_M, j * TILE_M, (i + 1) * TILE_M, (j + 1) * TILE_M)
+
+
+def lonlat_box(x0, y0, x1, y1):
+    """The lon/lat box holding a LAEA box (edges sampled, since they curve in lon/lat)."""
+    t = np.linspace(0, 1, 33)
+    xs = np.concatenate([x0 + (x1 - x0) * t, np.full_like(t, x1), x1 - (x1 - x0) * t, np.full_like(t, x0)])
+    ys = np.concatenate([np.full_like(t, y0), y0 + (y1 - y0) * t, np.full_like(t, y1), y1 - (y1 - y0) * t])
+    lon, lat = to_lonlat.transform(xs, ys)
+    return (float(np.min(lon)), float(np.min(lat)), float(np.max(lon)), float(np.max(lat)))
+
+
+def area(name):
+    """Settings of a named area (AREAS) or a UK bake grid tile, with its output folder.
+
+    Grid tiles also carry "square", the exact LAEA tile, and their lon/lat bbox holds the
+    square grown by MARGIN_M plus a little, so every query sees past the tile edge."""
+    square = tile_square(name)
+    if square is None:
+        return dict(AREAS[name], out=ROOT / "public" / "data" / "detail" / name)
+    x0, y0, x1, y1 = square
+    m = MARGIN_M + 200
+    return dict(TILE, bbox=lonlat_box(x0 - m, y0 - m, x1 + m, y1 + m), square=square, out=BAKE / name)
+
+
+def write_atomic(path, write):
+    """Writes path via a temporary file, so a run stopped mid-write never leaves a truncated
+    cache file behind. Another worker may have written it first; then theirs is kept."""
+    path = pathlib.Path(path)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    write(tmp)
+    try:
+        os.replace(tmp, path)
+    except PermissionError:
+        # Windows refuses to replace a file another process has open.
+        tmp.unlink(missing_ok=True)
+        if not path.exists():
+            raise
+
+
+def uk_extract(kind, bbox, columns, extra=None):
+    """Rows of a UK-wide Overture extract (bake_uk.py) whose bbox overlaps bbox, or None.
+
+    The extracts carry flat xmin/xmax/ymin/ymax columns and are sorted spatially in small
+    row groups, so the row-group statistics skip almost everything."""
+    path = UK / f"{kind}.parquet"
+    if not path.exists():
+        return None
+    xmin, ymin, xmax, ymax = bbox
+    f = ((ds.field("xmax") > xmin) & (ds.field("xmin") < xmax)
+         & (ds.field("ymax") > ymin) & (ds.field("ymin") < ymax))
+    if extra is not None:
+        f = f & extra
+    return ds.dataset(path, format="parquet").to_table(filter=f, columns=columns)
 
 
 def overture(theme, kind, bbox, columns, area):
@@ -140,6 +214,9 @@ def overture(theme, kind, bbox, columns, area):
     path = CACHE / f"{area}_{kind}.parquet"
     if path.exists():
         return pq.read_table(path)
+    table = uk_extract(kind, bbox, columns)
+    if table is not None:
+        return table
     fs = pafs.S3FileSystem(
         anonymous=True, region="us-west-2",
         proxy_options=os.environ.get("HTTPS_PROXY") or None,
@@ -154,7 +231,7 @@ def overture(theme, kind, bbox, columns, area):
                                    dataset.get_fragments()) if t.num_rows]
     table = pa.concat_tables(parts)
     path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(table, path)
+    write_atomic(path, lambda p: pq.write_table(table, p))
     return table
 
 
@@ -170,7 +247,8 @@ def fetch_tile(z, x, y):
         for attempt in range(4):
             try:
                 with urllib.request.urlopen(TILE_URL.format(z=z, x=x, y=y), timeout=60) as r:
-                    path.write_bytes(r.read())
+                    data = r.read()
+                write_atomic(path, lambda p: p.write_bytes(data))
                 break
             except OSError:
                 # Zoom 15 means hundreds of tiles per area, so ride out the odd dropped connection.
@@ -187,8 +265,12 @@ def sample_elevation(lon, lat, z=15):
     lat_r = np.radians(lat)
     py = (1.0 - np.log(np.tan(lat_r) + 1.0 / np.cos(lat_r)) / math.pi) / 2.0 * n
     tx0, ty0, tx1, ty1 = int(px.min()), int(py.min()), int(px.max()), int(py.max())
-    mosaic = np.vstack([np.hstack([fetch_tile(z, tx, ty) for tx in range(tx0, tx1 + 1)])
-                        for ty in range(ty0, ty1 + 1)])
+    with ThreadPoolExecutor(8) as ex:
+        tiles = list(ex.map(lambda t: fetch_tile(z, *t), [(tx, ty) for ty in range(ty0, ty1 + 1)
+                                                            for tx in range(tx0, tx1 + 1)]))
+    n = tx1 - tx0 + 1
+    mosaic = np.vstack([np.hstack(tiles[r * n:(r + 1) * n]) for r in range(ty1 - ty0 + 1)])
+    del tiles
     px = (px - tx0) * 256 - 0.5
     py = (py - ty0) * 256 - 0.5
     ix = np.clip(np.floor(px).astype(int), 0, mosaic.shape[1] - 2)
@@ -227,9 +309,11 @@ def lidar_heights(area_name, tiles, x0, y1, step):
 
     dtm = np.full(tiles.shape, np.nan, np.float32)
     with rasterio.open(path) as src:
-        reproject(src.read(1).astype(np.float32) / 10, dtm, src_transform=src.transform, src_crs=src.crs,
-                  src_nodata=src.nodata / 10, dst_transform=from_origin(x0 - step / 2, y1 + step / 2, step, step),
+        # Straight from the file (decimetres), so a UK bake tile's 1 m DTM is never held in memory whole.
+        reproject(rasterio.band(src, 1), dtm, src_nodata=src.nodata,
+                  dst_transform=from_origin(x0 - step / 2, y1 + step / 2, step, step),
                   dst_crs=PROJ, dst_nodata=np.nan, resampling=Resampling.average)
+    dtm /= 10
     valid = np.isfinite(dtm)
     # Feather only where the lidar stops on land; it also stops at the sea, and fading there
     # would blur every cliff top back to the coarser tiles.
@@ -437,17 +521,24 @@ class LidarHeights:
 
 
 def main(area_name):
-    cfg = AREAS[area_name]
+    cfg = area(area_name)
     bbox, spacing, texel = cfg["bbox"], cfg["spacing"], cfg["texel"]
-    out = ROOT / "public" / "data" / "detail" / area_name
+    out = cfg["out"]
     out.mkdir(parents=True, exist_ok=True)
 
-    # Grid in LAEA covering the lon/lat box, snapped to the spacing.
-    cx, cy = from_lonlat.transform([bbox[0], bbox[2], bbox[0], bbox[2]], [bbox[1], bbox[1], bbox[3], bbox[3]])
-    x0 = math.ceil(max(cx[0], cx[2]) / spacing) * spacing
-    x1 = math.floor(min(cx[1], cx[3]) / spacing) * spacing
-    y0 = math.ceil(max(cy[0], cy[1]) / spacing) * spacing
-    y1 = math.floor(min(cy[2], cy[3]) / spacing) * spacing
+    if "square" in cfg:
+        # A UK bake tile: work on the square grown by the margin, cropped back before writing.
+        margin = MARGIN_M
+        sx0, sy0, sx1, sy1 = cfg["square"]
+        x0, y0, x1, y1 = sx0 - margin, sy0 - margin, sx1 + margin, sy1 + margin
+    else:
+        # Grid in LAEA covering the lon/lat box, snapped to the spacing.
+        margin = 0
+        cx, cy = from_lonlat.transform([bbox[0], bbox[2], bbox[0], bbox[2]], [bbox[1], bbox[1], bbox[3], bbox[3]])
+        x0 = math.ceil(max(cx[0], cx[2]) / spacing) * spacing
+        x1 = math.floor(min(cx[1], cx[3]) / spacing) * spacing
+        y0 = math.ceil(max(cy[0], cy[1]) / spacing) * spacing
+        y1 = math.floor(min(cy[2], cy[3]) / spacing) * spacing
     xs = np.arange(x0, x1 + spacing, spacing)
     ys = np.arange(y1, y0 - spacing, -spacing)
     # Heights are worked out on a fine raster, which the ground mesh is built from; the grid
@@ -572,7 +663,6 @@ def main(area_name):
         cover_arr[put] = tv[put]
         print(f"tidal: {len(feats)} polygons, {(cover_arr == C['intertidal']).mean():.1%} flats,"
               f" {(cover_arr == C['saltmarsh']).mean():.1%} saltmarsh")
-    Image.fromarray(cover_arr, "L").save(out / "cover.png", optimize=True)
 
     # Force the heightmap to agree with the coastline, sampled at grid points.
     gi = np.clip(((gx - x0) / texel).astype(int), 0, cw - 1)
@@ -602,6 +692,19 @@ def main(area_name):
         coast_cells = np.abs(d) < 2 * spacing
         coast_stats = {"cliffShare": round(float((c[coast_cells] > 0.5).mean()), 3) if coast_cells.any() else 0}
         print("coast", coast_stats)
+    if margin:
+        # Crop the grown working area back to the tile square.
+        mf, mc = margin // step, margin // texel
+        heights = heights[mf:-mf, mf:-mf]
+        cover_arr = cover_arr[mc:-mc, mc:-mc]
+        fxs, fys = fxs[mf:-mf], fys[mf:-mf]
+        x0, y0, x1, y1 = sx0, sy0, sx1, sy1
+        xs = np.arange(x0, x1 + spacing, spacing)
+        ys = np.arange(y1, y0 - spacing, -spacing)
+        ch, cw = cover_arr.shape
+        # GB's land is one polygon, so every tile "has" coast: keep it only where sea shows.
+        has_coast = has_coast and bool((cover_arr == C["sea"]).any())
+    Image.fromarray(cover_arr, "L").save(out / "cover.png", optimize=True)
     mesh = write_mesh(heights, k, step, out / "ground.bin")
     grid = heights[::k, ::k]
     assert grid.shape == (len(ys), len(xs))
@@ -610,6 +713,12 @@ def main(area_name):
     gg = np.floor(v - rr * 256)
     bb = np.round((v - rr * 256 - gg) * 256)
     Image.fromarray(np.stack([rr, gg, bb], -1).astype(np.uint8), "RGB").save(out / "height.png", optimize=True)
+
+    def inside(x, y):
+        # Bake tiles own features half-open, [x0, x1) by [y0, y1), so none is drawn by two tiles.
+        if margin:
+            return x0 <= x < x1 and y0 <= y < y1
+        return x0 <= x <= x1 and y0 <= y <= y1
 
     def height_at(x, y):
         fx = np.clip((x - x0) / step, 0, len(fxs) - 1.001)
@@ -643,7 +752,7 @@ def main(area_name):
         if g.geom_type != "Polygon" or g.area < 8:
             continue
         c = g.centroid
-        if not (x0 <= c.x <= x1 and y0 <= c.y <= y1):
+        if not inside(c.x, c.y):
             continue
         measured = None if from_osm and row["height"] is not None and row["height"] > 1 else lidar.height(g)
         estimate = building_height(row, g.area)
@@ -682,7 +791,7 @@ def main(area_name):
     tree_xy = [g for g, s, c in zip(land_geoms, land_sub, land_cls) if s == "tree" and c == "tree" and g.geom_type == "Point"]
     tbuf = bytearray()
     for p in tree_xy:
-        if x0 <= p.x <= x1 and y0 <= p.y <= y1:
+        if inside(p.x, p.y):
             tbuf += struct.pack("<fff", p.x - x0, p.y - y1, height_at(p.x, p.y))
     (out / "trees.bin").write_bytes(bytes(tbuf))
 

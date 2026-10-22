@@ -52,6 +52,9 @@ def segments(area, bbox):
     path = ba.CACHE / f"{area}_roads.parquet"
     if path.exists():
         return pq.read_table(path)
+    table = ba.uk_extract("segment", bbox, COLUMNS, ds.field("subtype") == "road")
+    if table is not None:
+        return table
     fs = pafs.S3FileSystem(
         anonymous=True, region="us-west-2",
         proxy_options=os.environ.get("HTTPS_PROXY") or None,
@@ -65,7 +68,7 @@ def segments(area, bbox):
     with ThreadPoolExecutor(32) as ex:
         parts = [t for t in ex.map(lambda fr: fr.to_table(filter=f, columns=COLUMNS), dataset.get_fragments()) if t.num_rows]
     table = pa.concat_tables(parts)
-    pq.write_table(table, path)
+    ba.write_atomic(path, lambda p: pq.write_table(table, p))
     return table
 
 
@@ -81,12 +84,13 @@ def ranges(rules, wanted):
 
 
 def main(area):
-    cfg = ba.AREAS[area]
-    out = ba.ROOT / "public" / "data" / "detail" / area
+    cfg = ba.area(area)
+    out = cfg["out"]
     meta = json.loads((out / "meta.json").read_text())
     table = segments(area, cfg["bbox"]).to_pylist()
     geoms = ba.project(np.array([r["geometry"] for r in table], dtype=object))
     size = (meta["xMax"] - meta["xMin"], meta["yMax"] - meta["yMin"])
+    clip = shapely.box(*cfg["square"]) if "square" in cfg else None
     pieces = []
     for row, line in zip(table, geoms):
         cls = CLASSES.get(row["class"])
@@ -107,17 +111,19 @@ def main(area):
                 continue
             bridge = any(s <= mid <= e for s, e in bridges)
             part = shapely.ops.substring(line, a, b, normalized=True) if (a, b) != (0.0, 1.0) else line
-            if part.length < 1:
-                continue
-            d = np.linspace(0, part.length, max(int(np.ceil(part.length / STEP)), 1) + 1)
-            pts = shapely.get_coordinates(shapely.line_interpolate_point(part, d))
-            x = pts[:, 0] - meta["xMin"]
-            z = meta["yMax"] - pts[:, 1]
-            inside = (x > -50) & (z > -50) & (x < size[0] + 50) & (z < size[1] + 50)
-            if not inside.any():
-                continue
-            pieces.append((cls, (1 if bridge else 0) | (2 if unpaved else 0), width,
-                           np.column_stack([x, z]).astype(np.float32)))
+            # UK bake tiles cut roads at the tile edge, so neighbouring tiles don't both draw them.
+            for part in shapely.get_parts(shapely.intersection(part, clip)) if clip is not None else [part]:
+                if part.geom_type != "LineString" or part.length < 1:
+                    continue
+                d = np.linspace(0, part.length, max(int(np.ceil(part.length / STEP)), 1) + 1)
+                pts = shapely.get_coordinates(shapely.line_interpolate_point(part, d))
+                x = pts[:, 0] - meta["xMin"]
+                z = meta["yMax"] - pts[:, 1]
+                inside = (x > -50) & (z > -50) & (x < size[0] + 50) & (z < size[1] + 50)
+                if not inside.any():
+                    continue
+                pieces.append((cls, (1 if bridge else 0) | (2 if unpaved else 0), width,
+                               np.column_stack([x, z]).astype(np.float32)))
     # Narrow first, so wider roads draw over them where they meet.
     pieces.sort(key=lambda p: p[2])
     with open(out / "roads.bin", "wb") as f:

@@ -49,8 +49,8 @@ def lines_of(geoms):
 
 
 def main(area):
-    cfg = ba.AREAS[area]
-    out = ba.ROOT / "public" / "data" / "detail" / area
+    cfg = ba.area(area)
+    out = cfg["out"]
     meta = json.loads((out / "meta.json").read_text())
     bbox = cfg["bbox"]
     infra = ba.overture("base", "infrastructure", bbox, ["subtype", "class", "geometry"], area)
