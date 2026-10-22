@@ -1,0 +1,19 @@
+{
+  "source": "NASA/Goddard Space Flight Center Scientific Visualization Studio, Deep Star Maps 2020; Gaia DR2: ESA/Gaia/DPAC",
+  "projection": "plate carree, J2000 equatorial, 0h at the centre, right ascension increasing to the left",
+  "raSign": -1.0,
+  "log2Min": -39.86313713864835,
+  "log2Max": -17.061735698583316,
+  "calibration": {
+    "K": 56.70940689469223,
+    "scatter_dex": 0.09415562175479822,
+    "raSign": -1.0,
+    "K_low_dec_over_high": 0.6176502920023408
+  },
+  "percentiles": {
+    "1": 2.206371715709439e-10,
+    "50": 4.65300828333101e-09,
+    "99": 1.595005792001746e-07,
+    "99.9": 1.2208058415235828e-06
+  }
+}
