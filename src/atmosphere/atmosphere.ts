@@ -80,6 +80,18 @@ function lut(width: number, height: number, count = 1): THREE.WebGLRenderTarget 
   return target;
 }
 
+/** Lifts a true direction to where refraction shows it (Bennett 1982, for standard air), in place. */
+function refract(d: THREE.Vector3): THREE.Vector3 {
+  const h = THREE.MathUtils.radToDeg(Math.asin(THREE.MathUtils.clamp(d.y, -1, 1)));
+  if (h < -1.5) return d;
+  const he = Math.max(h, -1);
+  const lift = THREE.MathUtils.degToRad(1 / Math.tan(THREE.MathUtils.degToRad(he + 7.31 / (he + 4.4))) / 60);
+  const horiz = Math.hypot(d.x, d.z);
+  if (horiz < 1e-6) return d;
+  const e = Math.asin(THREE.MathUtils.clamp(d.y, -1, 1)) + lift * THREE.MathUtils.smoothstep(h, -1.5, -1);
+  return d.set((d.x / horiz) * Math.cos(e), Math.sin(e), (d.z / horiz) * Math.cos(e));
+}
+
 /** JS twin of SKY_VIEW_UV, for reading the LUT back. */
 function skyViewUv(r: number, d: THREE.Vector3, l: THREE.Vector3): [number, number] {
   const B = BOTTOM_RADIUS;
@@ -489,8 +501,9 @@ export class Atmosphere {
     const north = new THREE.Vector3(up.x - here.x, 0, up.z - here.z).normalize();
     const east = new THREE.Vector3(-north.z, 0, north.x);
     this.sky = skyState(this.time, lon, lat, north, east);
-    this.sunDirection.copy(this.sky.sun);
-    this.moonDirection.copy(this.sky.moon);
+    // Seen through refraction, like the stars in the sky shader: up to half a degree higher at the horizon.
+    refract(this.sunDirection.copy(this.sky.sun));
+    refract(this.moonDirection.copy(this.sky.moon));
     const u = this.skyMaterial.uniforms;
     u.uMoonRadius.value = this.sky.moonRadius;
     (u.uEquatorialToWorld.value as THREE.Matrix3).copy(this.sky.equatorialToWorld);
