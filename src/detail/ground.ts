@@ -122,6 +122,7 @@ uniform float useImagery;
 uniform float roadRibbons;
 varying vec2 vLocal;
 varying float vHeight;
+varying vec3 vObjNormal;
 /** Surface relief (m) for bump shading, set by surfaceColour. */
 float surfBump;
 
@@ -234,6 +235,16 @@ vec3 surfaceColour(vec2 p, out float rough) {
     }
     k = side;
   }
+  // Water mapped on sloping ground is a stream down a fold, hidden in the grass: shaded as a
+  // lake it shows as a hard sliver (bright, or black) across the hillside. Draw the ground
+  // beside it instead; only level water stays water.
+  if (k == 9 && normalize(vObjNormal).y < 0.985) {
+    for (int i = 0; i < 8; i++) {
+      float a = float(i) * 0.785398;
+      int s = coverClass(p + vec2(cos(a), sin(a)) * 10.0);
+      if (s != 9) { k = s; break; }
+    }
+  }
   vec3 c = proceduralColour(p, k, rough);
   // Not the flats: the summer image catches them at whatever state of tide.
   bool natural = (k >= 1 && k <= 8) || k == 14 || (k >= 17 && k != 20);
@@ -263,8 +274,6 @@ vec3 surfaceColour(vec2 p, out float rough) {
  * the splash zone and a dark, wet, weedy foot. See docs/coastal-cliffs.md.
  */
 const ROCK = /* glsl */ `
-varying vec3 vObjNormal;
-
 /** Face normal (true scale, y up) from screen-space derivatives of the local position. */
 vec3 faceNormal() {
   vec3 pos = vec3(vLocal.x, vHeight, vLocal.y);
@@ -333,14 +342,6 @@ if (rockW > 0.0) {
   surf = mix(surf, rock, rockW);
   surfRough = mix(surfRough, rockRough, rockW);
   surfBump = mix(surfBump, rockBump, rockW);
-}
-// Water mapped on sloping ground is a stream down a fold, not a lake: as a mirror it shows
-// the bright horizon, and as dark water a black crack, across the hillside. Only level water
-// stays water; elsewhere it is a damp, rushy strip.
-if (surfRough < 0.2) {
-  float level = smoothstep(0.985, 0.998, min(normalize(vObjNormal).y, faceNormal().y));
-  surf = mix(vec3(0.20, 0.25, 0.13) * (0.85 + 0.3 * vnoise(vLocal / 1.5)), surf, level);
-  surfRough = mix(0.9, surfRough, level);
 }
 diffuseColor.rgb = pow(surf, vec3(2.2));
 `;
